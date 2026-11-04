@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CellPos, colLabel, toAddress } from "@/lib/address";
 import styles from "./Grid.module.css";
+import { computeAll } from "@/lib/sheet";
+import { formatValue, isError } from "@/lib/evaluate";
 
 const ROWS = 20;
-const COLS = 26;
+const COLS = 10;
 
 const NAV_KEYS: Record<string, [number, number]> = {
   ArrowUp: [-1, 0],
@@ -24,6 +26,9 @@ export default function Grid() {
   // Text being typed. null means "not editing".
   const [draft, setDraft] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Recomputed only when `cells` changes, not on every keystroke in the editor
+const values = useMemo(() => computeAll(cells, ROWS, COLS), [cells]);
 
   const address = toAddress(active);
   const raw = cells[address] ?? "";
@@ -113,28 +118,35 @@ export default function Grid() {
             <tr key={r}>
               <th>{r + 1}</th>
               {Array.from({ length: COLS }, (_, c) => {
-                const isActive = r === active.row && c === active.col;
-                return (
-                  <td
-                    key={c}
-                    className={isActive ? styles.active : undefined}
-                    onClick={() => {
-                      commit(); // clicking away saves what you typed
-                      setActive({ row: r, col: c });
-                    }}
-                  >
-                    {isActive && draft !== null ? (
-                      <CellEditor
-                        value={draft}
-                        onChange={setDraft}
-                        onKeyDown={onEditorKeyDown}
-                      />
-                    ) : (
-                      cells[toAddress({ row: r, col: c })]
-                    )}
-                  </td>
-                );
-              })}
+  const isActive = r === active.row && c === active.col;
+  const value = values[toAddress({ row: r, col: c })];
+  const classes = [
+    isActive ? styles.active : "",
+    isError(value) ? styles.error : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <td
+      key={c}
+      className={classes}
+      onClick={() => {
+        commit();
+        setActive({ row: r, col: c });
+      }}
+    >
+      {isActive && draft !== null ? (
+        <CellEditor
+          value={draft}
+          onChange={setDraft}
+          onKeyDown={onEditorKeyDown}
+        />
+      ) : (
+        formatValue(value)
+      )}
+    </td>
+  );
+})}
             </tr>
           ))}
         </tbody>
