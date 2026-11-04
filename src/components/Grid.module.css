@@ -1,0 +1,29 @@
+.bar {
+    padding: 8px 12px;
+    font-family: monospace;
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .grid {
+    border-collapse: collapse;
+  }
+  
+  .grid th {
+    background: var(--header-bg);
+    font-weight: 500;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    min-width: 32px;
+  }
+  
+  .grid td {
+    border: 1px solid var(--border);
+    width: 96px;
+    height: 28px;
+    cursor: cell;
+  }
+  
+  .active {
+    outline: 2px solid var(--active);
+    outline-offset: -2px;
+  }
