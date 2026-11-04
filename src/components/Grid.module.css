@@ -27,3 +27,22 @@
     outline: 2px solid var(--active);
     outline-offset: -2px;
   }
+
+  .root:focus {
+    outline: none;
+  }
+  
+  .grid td {
+    padding: 0 4px;
+  }
+  
+  .editor {
+    width: 100%;
+    height: 26px;
+    box-sizing: border-box;
+    border: none;
+    outline: none;
+    font: inherit;
+    background: transparent;
+    padding: 0;
+  }

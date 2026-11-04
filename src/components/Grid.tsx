@@ -1,23 +1,103 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CellPos, colLabel, toAddress } from "@/lib/address";
 import styles from "./Grid.module.css";
 
 const ROWS = 20;
-const COLS = 10;
+const COLS = 26;
 
-function colLabel(index: number): string {
-  return String.fromCharCode(65 + index); // 0 -> "A", 1 -> "B"
-}
+const NAV_KEYS: Record<string, [number, number]> = {
+  ArrowUp: [-1, 0],
+  ArrowDown: [1, 0],
+  ArrowLeft: [0, -1],
+  ArrowRight: [0, 1],
+};
+
+const clamp = (value: number, count: number) =>
+  Math.max(0, Math.min(count - 1, value));
 
 export default function Grid() {
-  const [active, setActive] = useState({ row: 0, col: 0 });
+  const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
+  // Sparse map: only filled cells exist. Keys are addresses like "B7".
+  const [cells, setCells] = useState<Record<string, string>>({});
+  // Text being typed. null means "not editing".
+  const [draft, setDraft] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const address = toAddress(active);
+  const raw = cells[address] ?? "";
+
+  function move(dRow: number, dCol: number) {
+    setActive((p) => ({
+      row: clamp(p.row + dRow, ROWS),
+      col: clamp(p.col + dCol, COLS),
+    }));
+  }
+
+  function setCell(addr: string, value: string) {
+    setCells((prev) => {
+      const next = { ...prev };
+      if (value === "") delete next[addr];
+      else next[addr] = value;
+      return next;
+    });
+  }
+
+  function commit() {
+    if (draft === null) return;
+    setCell(address, draft);
+    setDraft(null);
+  }
+
+  // The input unmounts when editing ends, so give focus back to the grid
+  // or the arrow keys stop working.
+  function refocus() {
+    rootRef.current?.focus();
+  }
+
+  function onGridKeyDown(e: React.KeyboardEvent) {
+    if (draft !== null) return; // while editing, the input handles keys
+
+    const nav = NAV_KEYS[e.key];
+    if (nav) {
+      e.preventDefault(); // stops the page scrolling
+      move(nav[0], nav[1]);
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      move(0, e.shiftKey ? -1 : 1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      setDraft(raw);
+    } else if (e.key === "Backspace" || e.key === "Delete") {
+      setCell(address, "");
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setDraft(e.key); // type-to-overwrite: replaces the old content
+    }
+  }
+
+  function onEditorKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+      move(1, 0);
+      refocus();
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      commit();
+      move(0, e.shiftKey ? -1 : 1);
+      refocus();
+    } else if (e.key === "Escape") {
+      setDraft(null);
+      refocus();
+    }
+  }
 
   return (
-    <div>
+    <div ref={rootRef} tabIndex={0} className={styles.root} onKeyDown={onGridKeyDown}>
       <div className={styles.bar}>
-        {colLabel(active.col)}
-        {active.row + 1}
+        {address}: {draft ?? raw}
       </div>
       <table className={styles.grid}>
         <thead>
@@ -32,19 +112,62 @@ export default function Grid() {
           {Array.from({ length: ROWS }, (_, r) => (
             <tr key={r}>
               <th>{r + 1}</th>
-              {Array.from({ length: COLS }, (_, c) => (
-                <td
-                  key={c}
-                  className={
-                    r === active.row && c === active.col ? styles.active : undefined
-                  }
-                  onClick={() => setActive({ row: r, col: c })}
-                />
-              ))}
+              {Array.from({ length: COLS }, (_, c) => {
+                const isActive = r === active.row && c === active.col;
+                return (
+                  <td
+                    key={c}
+                    className={isActive ? styles.active : undefined}
+                    onClick={() => {
+                      commit(); // clicking away saves what you typed
+                      setActive({ row: r, col: c });
+                    }}
+                  >
+                    {isActive && draft !== null ? (
+                      <CellEditor
+                        value={draft}
+                        onChange={setDraft}
+                        onKeyDown={onEditorKeyDown}
+                      />
+                    ) : (
+                      cells[toAddress({ row: r, col: c })]
+                    )}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CellEditor({
+  value,
+  onChange,
+  onKeyDown,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+
+  // Runs once when the editor appears: focus it, caret at the end.
+  useEffect(() => {
+    const el = ref.current!;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+
+  return (
+    <input
+      ref={ref}
+      className={styles.editor}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+    />
   );
 }
