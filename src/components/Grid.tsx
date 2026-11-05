@@ -6,6 +6,12 @@ import { CellChange, History } from "@/lib/history";
 import styles from "./Grid.module.css";
 import { Sheet } from "@/lib/sheet";
 import { formatValue, isError } from "@/lib/evaluate";
+import {
+  inRange,
+  normalizeRange,
+  rangeLabel,
+  rangeStats,
+} from "@/lib/selection";
 
 const ROWS = 20;
 const COLS = 10;
@@ -23,31 +29,68 @@ const clamp = (value: number, count: number) =>
 export default function Grid() {
   const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
 
+  // Opposite corner of the selected range. null = just the active cell.
+  const [extent, setExtent] = useState<CellPos | null>(null);
+
+  // True while the mouse button is held after pressing on a cell. A ref (not
+  // state) because changing it shouldn't re-render anything.
+  const dragging = useRef(false);
+
   // Text being typed. null means "not editing".
   const [draft, setDraft] = useState<string | null>(null);
+
   // Where the current edit is happening: inside the cell or in the formula bar.
   const [editSource, setEditSource] = useState<"cell" | "bar">("cell");
+
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // The mouse can be released anywhere, even outside the grid, so listen on
+  // the whole window. Otherwise a drag could get "stuck on".
+  useEffect(() => {
+    const stop = () => {
+      dragging.current = false;
+    };
+    window.addEventListener("mouseup", stop);
+    return () => window.removeEventListener("mouseup", stop);
+  }, []);
 
   // The engine lives for the component's lifetime. The initializer function
   // makes useState create it once, not on every render.
   const [sheet] = useState(() => new Sheet(ROWS, COLS));
+
   // Same pattern as the sheet: created once, mutated in place.
   const [history] = useState(() => new History());
+
   // `sheet` is mutated in place, so React can't see changes. Bumping this
   // counter forces a re-render after each edit.
   const [, setVersion] = useState(0);
+
   // Temporary: shows how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
 
   const address = toAddress(active);
   const raw = sheet.raw[address] ?? "";
 
+  const range = normalizeRange(active, extent ?? active);
+  const stats = rangeStats(range, sheet.values);
+
   function move(dRow: number, dCol: number) {
+    setExtent(null); // moving collapses any range back to one cell
     setActive((p) => ({
       row: clamp(p.row + dRow, ROWS),
       col: clamp(p.col + dCol, COLS),
     }));
+  }
+
+  // Shift+arrow: move the far corner, starting from the active cell.
+  function extend(dRow: number, dCol: number) {
+    setExtent((prev) => {
+      const from = prev ?? active;
+      return {
+        row: clamp(from.row + dRow, ROWS),
+        col: clamp(from.col + dCol, COLS),
+      };
+    });
   }
 
   // Every user edit goes through here: record it, then apply it.
@@ -69,6 +112,9 @@ export default function Grid() {
     }
     setRecalculated(count);
     setVersion((v) => v + 1);
+
+    setExtent(null); // undo/redo jumps to one cell, so drop any range
+
     // Move the selection to the changed cell so you can see what happened
     const pos = parseAddress(changes[0].addr);
     if (pos) setActive(pos);
@@ -121,7 +167,8 @@ export default function Grid() {
     const nav = NAV_KEYS[e.key];
     if (nav) {
       e.preventDefault(); // stops the page scrolling
-      move(nav[0], nav[1]);
+      if (e.shiftKey) extend(nav[0], nav[1]);
+      else move(nav[0], nav[1]);
     } else if (e.key === "Tab") {
       e.preventDefault();
       move(0, e.shiftKey ? -1 : 1);
@@ -198,9 +245,11 @@ export default function Grid() {
               <th>{r + 1}</th>
               {Array.from({ length: COLS }, (_, c) => {
                 const isActive = r === active.row && c === active.col;
+                const isSelected = !isActive && inRange(range, r, c);
                 const value = sheet.values[toAddress({ row: r, col: c })];
                 const classes = [
                   isActive ? styles.active : "",
+                  isSelected ? styles.inRange : "",
                   isError(value) ? styles.error : "",
                 ]
                   .filter(Boolean)
@@ -224,9 +273,19 @@ export default function Grid() {
                   <td
                     key={c}
                     className={classes}
-                    onClick={() => {
-                      commit();
-                      setActive({ row: r, col: c });
+                    onMouseDown={(e) => {
+                      // A click inside the open cell editor is just placing the caret
+                      if (e.target instanceof HTMLInputElement) return;
+                      if (e.shiftKey) {
+                        setExtent({ row: r, col: c }); // extend from the active cell
+                      } else {
+                        setActive({ row: r, col: c });
+                        setExtent(null);
+                        dragging.current = true; // a drag may follow
+                      }
+                    }}
+                    onMouseEnter={() => {
+                      if (dragging.current) setExtent({ row: r, col: c });
                     }}
                   >
                     {content}
@@ -237,6 +296,15 @@ export default function Grid() {
           ))}
         </tbody>
       </table>
+
+      <div className={styles.statusBar}>
+        <span>{rangeLabel(range)}</span>
+        <span>Sum: {stats.count > 0 ? formatValue(stats.sum) : "—"}</span>
+        <span>
+          Average: {stats.average !== null ? formatValue(stats.average) : "—"}
+        </span>
+        <span>Count: {stats.count}</span>
+      </div>
     </div>
   );
 }

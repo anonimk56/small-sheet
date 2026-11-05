@@ -84,3 +84,25 @@
   font-size: 12px;
   color: #6b7a76;
 }
+
+.inRange {
+  background: rgba(46, 123, 214, 0.12);
+}
+
+/* Dragging across cells shouldn't select page text */
+.grid {
+  user-select: none;
+}
+
+.editor {
+  user-select: text;
+}
+
+.statusBar {
+  display: flex;
+  gap: 24px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-family: monospace;
+  font-size: 12px;
+}
