@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CellPos, colLabel, toAddress } from "@/lib/address";
 import styles from "./Grid.module.css";
-import { computeAll } from "@/lib/sheet";
+import { Sheet } from "@/lib/sheet";
 import { formatValue, isError } from "@/lib/evaluate";
 
 const ROWS = 20;
@@ -21,17 +21,22 @@ const clamp = (value: number, count: number) =>
 
 export default function Grid() {
   const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
-  // Sparse map: only filled cells exist. Keys are addresses like "B7".
-  const [cells, setCells] = useState<Record<string, string>>({});
+
   // Text being typed. null means "not editing".
   const [draft, setDraft] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Recomputed only when `cells` changes, not on every keystroke in the editor
-const values = useMemo(() => computeAll(cells, ROWS, COLS), [cells]);
+  // The engine lives for the component's lifetime. The initializer function
+// makes useState create it once, not on every render.
+const [sheet] = useState(() => new Sheet(ROWS, COLS));
+// `sheet` is mutated in place, so React can't see changes. Bumping this
+// counter forces a re-render after each edit.
+const [, setVersion] = useState(0);
+// Temporary: shows how many cells the last edit recomputed (for testing).
+const [recalculated, setRecalculated] = useState(0);
 
   const address = toAddress(active);
-  const raw = cells[address] ?? "";
+  const raw = sheet.raw[address] ?? "";
 
   function move(dRow: number, dCol: number) {
     setActive((p) => ({
@@ -41,12 +46,8 @@ const values = useMemo(() => computeAll(cells, ROWS, COLS), [cells]);
   }
 
   function setCell(addr: string, value: string) {
-    setCells((prev) => {
-      const next = { ...prev };
-      if (value === "") delete next[addr];
-      else next[addr] = value;
-      return next;
-    });
+    setRecalculated(sheet.setCell(addr, value));
+    setVersion((v) => v + 1);
   }
 
   function commit() {
@@ -100,9 +101,15 @@ const values = useMemo(() => computeAll(cells, ROWS, COLS), [cells]);
   }
 
   return (
-    <div ref={rootRef} tabIndex={0} className={styles.root} onKeyDown={onGridKeyDown}>
+    <div
+      ref={rootRef}
+      tabIndex={0}
+      className={styles.root}
+      onKeyDown={onGridKeyDown}
+    >
       <div className={styles.bar}>
-        {address}: {draft ?? raw}
+      {address}: {draft ?? raw}
+      {"  ·  "}recalculated: {recalculated}
       </div>
       <table className={styles.grid}>
         <thead>
@@ -118,35 +125,35 @@ const values = useMemo(() => computeAll(cells, ROWS, COLS), [cells]);
             <tr key={r}>
               <th>{r + 1}</th>
               {Array.from({ length: COLS }, (_, c) => {
-  const isActive = r === active.row && c === active.col;
-  const value = values[toAddress({ row: r, col: c })];
-  const classes = [
-    isActive ? styles.active : "",
-    isError(value) ? styles.error : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return (
-    <td
-      key={c}
-      className={classes}
-      onClick={() => {
-        commit();
-        setActive({ row: r, col: c });
-      }}
-    >
-      {isActive && draft !== null ? (
-        <CellEditor
-          value={draft}
-          onChange={setDraft}
-          onKeyDown={onEditorKeyDown}
-        />
-      ) : (
-        formatValue(value)
-      )}
-    </td>
-  );
-})}
+                const isActive = r === active.row && c === active.col;
+                const value = sheet.values[toAddress({ row: r, col: c })];
+                const classes = [
+                  isActive ? styles.active : "",
+                  isError(value) ? styles.error : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                return (
+                  <td
+                    key={c}
+                    className={classes}
+                    onClick={() => {
+                      commit();
+                      setActive({ row: r, col: c });
+                    }}
+                  >
+                    {isActive && draft !== null ? (
+                      <CellEditor
+                        value={draft}
+                        onChange={setDraft}
+                        onKeyDown={onEditorKeyDown}
+                      />
+                    ) : (
+                      formatValue(value)
+                    )}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
