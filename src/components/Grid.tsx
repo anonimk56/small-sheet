@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CellPos, colLabel, toAddress } from "@/lib/address";
+import { CellPos, colLabel, parseAddress, toAddress } from "@/lib/address";
+import { CellChange, History } from "@/lib/history";
 import styles from "./Grid.module.css";
 import { Sheet } from "@/lib/sheet";
 import { formatValue, isError } from "@/lib/evaluate";
@@ -27,13 +28,15 @@ export default function Grid() {
   const rootRef = useRef<HTMLDivElement>(null);
 
   // The engine lives for the component's lifetime. The initializer function
-// makes useState create it once, not on every render.
-const [sheet] = useState(() => new Sheet(ROWS, COLS));
-// `sheet` is mutated in place, so React can't see changes. Bumping this
-// counter forces a re-render after each edit.
-const [, setVersion] = useState(0);
-// Temporary: shows how many cells the last edit recomputed (for testing).
-const [recalculated, setRecalculated] = useState(0);
+  // makes useState create it once, not on every render.
+  const [sheet] = useState(() => new Sheet(ROWS, COLS));
+  // Same pattern as the sheet: created once, mutated in place.
+  const [history] = useState(() => new History());
+  // `sheet` is mutated in place, so React can't see changes. Bumping this
+  // counter forces a re-render after each edit.
+  const [, setVersion] = useState(0);
+  // Temporary: shows how many cells the last edit recomputed (for testing).
+  const [recalculated, setRecalculated] = useState(0);
 
   const address = toAddress(active);
   const raw = sheet.raw[address] ?? "";
@@ -45,10 +48,39 @@ const [recalculated, setRecalculated] = useState(0);
     }));
   }
 
-  function setCell(addr: string, value: string) {
-    setRecalculated(sheet.setCell(addr, value));
-    setVersion((v) => v + 1);
+// Every user edit goes through here: record it, then apply it.
+function setCell(addr: string, value: string) {
+  const before = sheet.raw[addr] ?? "";
+  history.record([{ addr, before, after: value }]);
+  setRecalculated(sheet.setCell(addr, value));
+  setVersion((v) => v + 1);
+}
+
+// Replays an entry. Undo applies "before" values, redo applies "after".
+function applyChanges(changes: CellChange[], direction: "undo" | "redo") {
+  // Undo walks backwards so that if one cell appears twice in an entry
+  // (possible with paste), it ends on its original value.
+  const ordered = direction === "undo" ? [...changes].reverse() : changes;
+  let count = 0;
+  for (const c of ordered) {
+    count = sheet.setCell(c.addr, direction === "undo" ? c.before : c.after);
   }
+  setRecalculated(count);
+  setVersion((v) => v + 1);
+  // Move the selection to the changed cell so you can see what happened
+  const pos = parseAddress(changes[0].addr);
+  if (pos) setActive(pos);
+}
+
+function undo() {
+  const entry = history.undo();
+  if (entry) applyChanges(entry, "undo");
+}
+
+function redo() {
+  const entry = history.redo();
+  if (entry) applyChanges(entry, "redo");
+}
 
   function commit() {
     if (draft === null) return;
@@ -64,6 +96,22 @@ const [recalculated, setRecalculated] = useState(0);
 
   function onGridKeyDown(e: React.KeyboardEvent) {
     if (draft !== null) return; // while editing, the input handles keys
+
+    // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
+if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+  const key = e.key.toLowerCase();
+  if (key === "z") {
+    e.preventDefault();
+    if (e.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (key === "y") {
+    e.preventDefault();
+    redo();
+    return;
+  }
+}
 
     const nav = NAV_KEYS[e.key];
     if (nav) {
@@ -108,8 +156,8 @@ const [recalculated, setRecalculated] = useState(0);
       onKeyDown={onGridKeyDown}
     >
       <div className={styles.bar}>
-      {address}: {draft ?? raw}
-      {"  ·  "}recalculated: {recalculated}
+        {address}: {draft ?? raw}
+        {"  ·  "}recalculated: {recalculated}
       </div>
       <table className={styles.grid}>
         <thead>
