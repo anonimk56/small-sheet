@@ -25,6 +25,8 @@ export default function Grid() {
 
   // Text being typed. null means "not editing".
   const [draft, setDraft] = useState<string | null>(null);
+  // Where the current edit is happening: inside the cell or in the formula bar.
+  const [editSource, setEditSource] = useState<"cell" | "bar">("cell");
   const rootRef = useRef<HTMLDivElement>(null);
 
   // The engine lives for the component's lifetime. The initializer function
@@ -48,39 +50,39 @@ export default function Grid() {
     }));
   }
 
-// Every user edit goes through here: record it, then apply it.
-function setCell(addr: string, value: string) {
-  const before = sheet.raw[addr] ?? "";
-  history.record([{ addr, before, after: value }]);
-  setRecalculated(sheet.setCell(addr, value));
-  setVersion((v) => v + 1);
-}
-
-// Replays an entry. Undo applies "before" values, redo applies "after".
-function applyChanges(changes: CellChange[], direction: "undo" | "redo") {
-  // Undo walks backwards so that if one cell appears twice in an entry
-  // (possible with paste), it ends on its original value.
-  const ordered = direction === "undo" ? [...changes].reverse() : changes;
-  let count = 0;
-  for (const c of ordered) {
-    count = sheet.setCell(c.addr, direction === "undo" ? c.before : c.after);
+  // Every user edit goes through here: record it, then apply it.
+  function setCell(addr: string, value: string) {
+    const before = sheet.raw[addr] ?? "";
+    history.record([{ addr, before, after: value }]);
+    setRecalculated(sheet.setCell(addr, value));
+    setVersion((v) => v + 1);
   }
-  setRecalculated(count);
-  setVersion((v) => v + 1);
-  // Move the selection to the changed cell so you can see what happened
-  const pos = parseAddress(changes[0].addr);
-  if (pos) setActive(pos);
-}
 
-function undo() {
-  const entry = history.undo();
-  if (entry) applyChanges(entry, "undo");
-}
+  // Replays an entry. Undo applies "before" values, redo applies "after".
+  function applyChanges(changes: CellChange[], direction: "undo" | "redo") {
+    // Undo walks backwards so that if one cell appears twice in an entry
+    // (possible with paste), it ends on its original value.
+    const ordered = direction === "undo" ? [...changes].reverse() : changes;
+    let count = 0;
+    for (const c of ordered) {
+      count = sheet.setCell(c.addr, direction === "undo" ? c.before : c.after);
+    }
+    setRecalculated(count);
+    setVersion((v) => v + 1);
+    // Move the selection to the changed cell so you can see what happened
+    const pos = parseAddress(changes[0].addr);
+    if (pos) setActive(pos);
+  }
 
-function redo() {
-  const entry = history.redo();
-  if (entry) applyChanges(entry, "redo");
-}
+  function undo() {
+    const entry = history.undo();
+    if (entry) applyChanges(entry, "undo");
+  }
+
+  function redo() {
+    const entry = history.redo();
+    if (entry) applyChanges(entry, "redo");
+  }
 
   function commit() {
     if (draft === null) return;
@@ -95,23 +97,26 @@ function redo() {
   }
 
   function onGridKeyDown(e: React.KeyboardEvent) {
-    if (draft !== null) return; // while editing, the input handles keys
+    // While editing, or when the key was typed in an input (cell editor or
+    // formula bar), the input handles it. Otherwise arrows would move the
+    // selection instead of the text caret.
+    if (draft !== null || e.target instanceof HTMLInputElement) return;
 
     // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
-if ((e.metaKey || e.ctrlKey) && !e.altKey) {
-  const key = e.key.toLowerCase();
-  if (key === "z") {
-    e.preventDefault();
-    if (e.shiftKey) redo();
-    else undo();
-    return;
-  }
-  if (key === "y") {
-    e.preventDefault();
-    redo();
-    return;
-  }
-}
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      const key = e.key.toLowerCase();
+      if (key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (key === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
+    }
 
     const nav = NAV_KEYS[e.key];
     if (nav) {
@@ -122,11 +127,13 @@ if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       move(0, e.shiftKey ? -1 : 1);
     } else if (e.key === "Enter") {
       e.preventDefault();
+      setEditSource("cell");
       setDraft(raw);
     } else if (e.key === "Backspace" || e.key === "Delete") {
       setCell(address, "");
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
+      setEditSource("cell");
       setDraft(e.key); // type-to-overwrite: replaces the old content
     }
   }
@@ -154,10 +161,27 @@ if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       tabIndex={0}
       className={styles.root}
       onKeyDown={onGridKeyDown}
+      onMouseDown={(e) => {
+        // Clicking anywhere else in the grid (a header, empty space) finishes
+        // a pending edit. Without this, an edit started in the bar could be
+        // left open and the grid would ignore the keyboard.
+        if (draft !== null && !(e.target instanceof HTMLInputElement)) commit();
+      }}
     >
       <div className={styles.bar}>
-        {address}: {draft ?? raw}
-        {"  ·  "}recalculated: {recalculated}
+        <span className={styles.address}>{address}</span>
+        <input
+          className={styles.formulaInput}
+          value={draft ?? raw}
+          onChange={(e) => {
+            setEditSource("bar");
+            setDraft(e.target.value);
+          }}
+          onKeyDown={onEditorKeyDown}
+          aria-label="Formula bar"
+          spellCheck={false}
+        />
+        <span className={styles.stat}>recalculated: {recalculated}</span>
       </div>
       <table className={styles.grid}>
         <thead>
@@ -181,6 +205,21 @@ if ((e.metaKey || e.ctrlKey) && !e.altKey) {
                 ]
                   .filter(Boolean)
                   .join(" ");
+
+                let content: React.ReactNode = formatValue(value);
+                if (isActive && draft !== null) {
+                  content =
+                    editSource === "cell" ? (
+                      <CellEditor
+                        value={draft}
+                        onChange={setDraft}
+                        onKeyDown={onEditorKeyDown}
+                      />
+                    ) : (
+                      draft // editing in the formula bar: preview the text here
+                    );
+                }
+
                 return (
                   <td
                     key={c}
@@ -190,15 +229,7 @@ if ((e.metaKey || e.ctrlKey) && !e.altKey) {
                       setActive({ row: r, col: c });
                     }}
                   >
-                    {isActive && draft !== null ? (
-                      <CellEditor
-                        value={draft}
-                        onChange={setDraft}
-                        onKeyDown={onEditorKeyDown}
-                      />
-                    ) : (
-                      formatValue(value)
-                    )}
+                    {content}
                   </td>
                 );
               })}
