@@ -21,7 +21,7 @@ const COLS = 12;
 const ROW_H = 28; // every body row
 const HEADER_H = 28; // the column-letter row
 const ROW_HEADER_W = 48; // the row-number column
-const DEFAULT_COL_W = 96;
+const MIN_AUTO_COL_W = 96; // narrowest a column gets when columns share the width
 const MIN_COL_W = 40;
 const OVERSCAN = 5; // extra rows rendered above and below the visible ones
 
@@ -65,9 +65,16 @@ export default function Grid() {
   // means React only re-renders when scrolling crosses a row boundary.
   const [scrollRow, setScrollRow] = useState(0);
   const [viewportH, setViewportH] = useState(600); // replaced by the real height on mount
-  const [colWidths, setColWidths] = useState<number[]>(() =>
-    Array.from({ length: COLS }, () => DEFAULT_COL_W),
+  const [viewportW, setViewportW] = useState(1200); // replaced by the real width on mount
+  // null = "share the available width"; a number = the user dragged this column
+  const [userWidths, setUserWidths] = useState<(number | null)[]>(() =>
+    Array.from({ length: COLS }, () => null),
   );
+  // Go-to-cell box: the text being typed (null = not editing) and whether it is invalid
+  const [addressDraft, setAddressDraft] = useState<string | null>(null);
+  const [addressInvalid, setAddressInvalid] = useState(false);
+  const addressRef = useRef<HTMLInputElement>(null);
+
   const [frozen, setFrozen] = useState(false);
   const resizing = useRef<{
     col: number;
@@ -90,7 +97,10 @@ export default function Grid() {
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => setViewportH(el.clientHeight));
+const observer = new ResizeObserver(() => {
+  setViewportH(el.clientHeight);
+  setViewportW(el.clientWidth); // clientWidth excludes the vertical scrollbar
+});
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -100,6 +110,14 @@ export default function Grid() {
   const raw = sheet.raw[address] ?? "";
   const range = normalizeRange(active, extent ?? active);
   const stats = rangeStats(range, sheet.values);
+
+  // Columns share the space left of the row numbers, but never get narrower
+// than the minimum. A column the user dragged keeps its own width.
+const autoWidth = Math.max(
+  MIN_AUTO_COL_W,
+  Math.floor((viewportW - ROW_HEADER_W) / COLS),
+);
+const colWidths = userWidths.map((w) => w ?? autoWidth);
 
   const totalWidth = ROW_HEADER_W + colWidths.reduce((a, b) => a + b, 0);
   const visibleCount = Math.ceil(viewportH / ROW_H);
@@ -137,31 +155,37 @@ export default function Grid() {
 
   // Scroll the minimum amount needed to bring a cell fully into view,
   // allowing for the sticky header and the sticky left columns.
-  function scrollToCell(pos: CellPos) {
-    const el = scrollerRef.current;
-    if (!el) return;
+// center=true is for big jumps (go-to-cell): the target lands mid-screen
+// instead of hugging the bottom edge.
+function scrollToCell(pos: CellPos, center = false) {
+  const el = scrollerRef.current;
+  if (!el) return;
 
-    // Vertical: row r starts r * ROW_H below the sticky header.
-    const rowTop = pos.row * ROW_H;
-    const rowBottom = rowTop + ROW_H;
-    const bodyHeight = el.clientHeight - HEADER_H;
-    if (rowTop < el.scrollTop) el.scrollTop = rowTop;
-    else if (rowBottom > el.scrollTop + bodyHeight) {
-      el.scrollTop = rowBottom - bodyHeight;
-    }
-
-    // Horizontal: the row numbers (and column A when frozen) always cover
-    // the left edge, so a cell is only "visible" to the right of them.
-    if (frozen && pos.col === 0) return;
-    const stuck = ROW_HEADER_W + (frozen ? colWidths[0] : 0);
-    let left = ROW_HEADER_W;
-    for (let i = 0; i < pos.col; i++) left += colWidths[i];
-    const right = left + colWidths[pos.col];
-    if (left < el.scrollLeft + stuck) el.scrollLeft = left - stuck;
-    else if (right > el.scrollLeft + el.clientWidth) {
-      el.scrollLeft = right - el.clientWidth;
-    }
+  // Vertical: row r starts r * ROW_H below the sticky header.
+  const rowTop = pos.row * ROW_H;
+  const rowBottom = rowTop + ROW_H;
+  const bodyHeight = el.clientHeight - HEADER_H;
+  if (center) {
+    el.scrollTop = Math.max(0, rowTop - (bodyHeight - ROW_H) / 2);
+  } else if (rowTop < el.scrollTop) {
+    el.scrollTop = rowTop;
+  } else if (rowBottom > el.scrollTop + bodyHeight) {
+    el.scrollTop = rowBottom - bodyHeight;
   }
+
+  // Horizontal: the row numbers (and column A when frozen) always cover
+  // the left edge, so a cell is only "visible" to the right of them.
+  if (frozen && pos.col === 0) return;
+  const stuck = ROW_HEADER_W + (frozen ? colWidths[0] : 0);
+  let left = ROW_HEADER_W;
+  for (let i = 0; i < pos.col; i++) left += colWidths[i];
+  const right = left + colWidths[pos.col];
+  if (left < el.scrollLeft + stuck) el.scrollLeft = left - stuck;
+  else if (right > el.scrollLeft + el.clientWidth) {
+    el.scrollLeft = right - el.clientWidth;
+  }
+}
+  
 
   // ---- editing and history ----
   // Every user edit goes through here: record it, then apply it.
@@ -214,6 +238,21 @@ export default function Grid() {
     rootRef.current?.focus();
   }
 
+  // Go-to-cell: "b7", "A9000"... Invalid input keeps the text and shows an error.
+function goTo(text: string) {
+  const pos = parseAddress(text.trim().toUpperCase());
+  if (pos && pos.row < ROWS && pos.col < COLS) {
+    setActive(pos);
+    setExtent(null);
+    scrollToCell(pos, true);
+    setAddressDraft(null);
+    setAddressInvalid(false);
+    refocus();
+  } else {
+    setAddressInvalid(true);
+  }
+}
+
   // ---- keyboard ----
   function onGridKeyDown(e: React.KeyboardEvent) {
     // While editing, or when the key was typed in an input (cell editor,
@@ -223,6 +262,11 @@ export default function Grid() {
     // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const key = e.key.toLowerCase();
+      if (key === "g") {
+        e.preventDefault(); // also stops the browser's "find next"
+        addressRef.current?.focus();
+        return;
+      }
       if (key === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -292,7 +336,7 @@ export default function Grid() {
     const r = resizing.current;
     if (!r) return;
     const width = Math.max(MIN_COL_W, r.startWidth + e.clientX - r.startX);
-    setColWidths((prev) => prev.map((w, i) => (i === r.col ? width : w)));
+    setUserWidths((prev) => prev.map((w, i) => (i === r.col ? width : w)));
   }
 
   function onResizeEnd() {
@@ -313,7 +357,39 @@ export default function Grid() {
       }}
     >
       <div className={styles.bar}>
-        <span className={styles.address}>{address}</span>
+      <input
+  ref={addressRef}
+  className={`${styles.address} ${addressInvalid ? styles.addressInvalid : ""}`}
+  value={addressDraft ?? address}
+  onChange={(e) => {
+    setAddressDraft(e.target.value);
+    setAddressInvalid(false);
+  }}
+  onFocus={(e) => {
+    commit(); // finish a pending cell edit first, so it lands in the right cell
+    setAddressDraft(address);
+    const el = e.currentTarget;
+    requestAnimationFrame(() => el.select()); // survives the mouse-up that follows a click
+  }}
+  onBlur={() => {
+    setAddressDraft(null); // clicking away cancels
+    setAddressInvalid(false);
+  }}
+  onKeyDown={(e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      goTo(addressDraft ?? address);
+    } else if (e.key === "Escape") {
+      setAddressDraft(null);
+      setAddressInvalid(false);
+      refocus();
+    }
+  }}
+  aria-label="Go to cell"
+  aria-invalid={addressInvalid}
+  spellCheck={false}
+  autoComplete="off"
+/>
         <input
           className={styles.formulaInput}
           value={draft ?? raw}
