@@ -1,56 +1,20 @@
-.bar {
+.root {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.grid {
-  border-collapse: collapse;
-}
-
-.grid th {
-  background: var(--header-bg);
-  font-weight: 500;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  min-width: 32px;
-}
-
-.grid td {
-  border: 1px solid var(--border);
-  width: 96px;
-  height: 28px;
-  cursor: cell;
-}
-
-.active {
-  outline: 2px solid var(--active);
-  outline-offset: -2px;
+  flex-direction: column;
+  height: 100dvh;
 }
 
 .root:focus {
   outline: none;
 }
 
-.grid td {
-  padding: 0 4px;
-}
-
-.editor {
-  width: 100%;
-  height: 26px;
-  box-sizing: border-box;
-  border: none;
-  outline: none;
-  font: inherit;
-  background: transparent;
-  padding: 0;
-}
-
-.error {
-  color: #c0392b;
+/* ---- formula bar ---- */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
 }
 
 .address {
@@ -83,21 +47,149 @@
 .stat {
   font-size: 12px;
   color: #6b7a76;
+  white-space: nowrap;
 }
 
-.inRange {
-  background: rgba(46, 123, 214, 0.12);
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-/* Dragging across cells shouldn't select page text */
-.grid {
+/* ---- scrolling area ---- */
+.scroller {
+  flex: 1;
+  min-height: 0; /* lets a flex child shrink so it can scroll */
+  overflow: auto;
+}
+
+.sizer {
+  position: relative; /* rows are positioned inside it */
+}
+
+/* ---- headers ---- */
+.headerRow {
+  position: sticky;
+  top: 0;
+  z-index: 4; /* above everything that scrolls under it */
+  display: flex;
+}
+
+.corner,
+.colHeader {
+  flex: none;
+  box-sizing: border-box;
+  background: var(--header-bg);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  line-height: 27px;
+  font-weight: 500;
   user-select: none;
 }
 
+.corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.colHeader {
+  position: relative; /* anchors the resize handle */
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.resizeHandle:hover {
+  background: rgba(46, 123, 214, 0.4);
+}
+
+/* ---- rows and cells ---- */
+.row {
+  position: absolute;
+  left: 0;
+  display: flex;
+}
+
+.rowHeader {
+  flex: none;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  background: var(--header-bg);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  line-height: 27px;
+  font-size: 12px;
+  user-select: none;
+}
+
+.cell {
+  flex: none;
+  box-sizing: border-box;
+  padding: 0 6px;
+  background: var(--bg); /* opaque, so sticky cells hide what scrolls under them */
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  line-height: 27px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: cell;
+  user-select: none;
+}
+
+/* Must come after .colHeader and .cell so it overrides their position */
+.frozenCol {
+  position: sticky;
+  z-index: 1;
+  box-shadow: 2px 0 3px -2px rgba(0, 0, 0, 0.3);
+}
+
+.active {
+  outline: 2px solid var(--active);
+  outline-offset: -2px;
+}
+
+/* A gradient overlay, not "background", so the opaque base color stays */
+.inRange {
+  background-image: linear-gradient(
+    rgba(46, 123, 214, 0.12),
+    rgba(46, 123, 214, 0.12)
+  );
+}
+
+.error {
+  color: #c0392b;
+}
+
 .editor {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  font: inherit;
+  background: transparent;
+  padding: 0;
   user-select: text;
 }
 
+/* ---- status bar ---- */
 .statusBar {
   display: flex;
   gap: 24px;
