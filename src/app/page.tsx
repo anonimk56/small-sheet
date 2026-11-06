@@ -1,20 +1,19 @@
-import Grid from "@/components/Grid";
-import { getFixture, isFixtureName } from "@/lib/fixtures";
+import SheetView from "@/components/SheetView";
 
-// Temporary, until sheets are loaded from the API in step 10:
-// /?fixture=budget (default), /?fixture=big or /?fixture=broken
+// Temporary: /?fixture=budget (default), big, broken. Anything else shows
+// the "not found" screen. Step 11 replaces this with /sheets/[id] routes.
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<{ fixture?: string }>;
 }) {
   const { fixture } = await searchParams;
-  const name = isFixtureName(fixture) ? fixture : "budget";
+  const id = typeof fixture === "string" && fixture !== "" ? fixture : "budget";
 
   return (
     <main>
-      {/* key: a different fixture gets a fresh Grid instead of reusing old state */}
-      <Grid key={name} initialCells={getFixture(name)} />
+      {/* key: switching sheets gives a fresh view instead of reusing old state */}
+      <SheetView key={id} id={id} />
     </main>
   );
 }

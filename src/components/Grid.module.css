@@ -213,3 +213,45 @@
   font-family: monospace;
   font-size: 12px;
 }
+
+.saveState {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 160px; /* the text changes length; this stops the bar jumping */
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.saveState::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.saved {
+  color: #2e7d4f;
+}
+
+.saving {
+  color: #8a6d1d;
+}
+
+.failed {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.retry {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #c0392b;
+  border-radius: 4px;
+  background: var(--bg);
+  color: #c0392b;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}

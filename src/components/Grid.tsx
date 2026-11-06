@@ -12,9 +12,8 @@ import {
   rangeStats,
 } from "@/lib/selection";
 import styles from "./Grid.module.css";
-
-const ROWS = 10_000;
-const COLS = 12;
+import { COLS, ROWS } from "@/lib/grid-size";
+import { SaveInfo, Saver } from "@/lib/saver";
 
 // Layout constants, in pixels. Row positions are computed from these, so
 // they must match the heights used in the CSS.
@@ -36,8 +35,10 @@ const clamp = (value: number, count: number) =>
   Math.max(0, Math.min(count - 1, value));
 
 export default function Grid({
+  sheetId,
   initialCells,
 }: {
+  sheetId: string;
   initialCells: Record<string, string>;
 }) {
   // ---- selection ----
@@ -66,6 +67,11 @@ export default function Grid({
   const [version, setVersion] = useState(0);
   // Temporary: how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
+
+    // ---- saving ----
+    const [save, setSave] = useState<SaveInfo>({ status: "saved", pending: 0 });
+    // Created once; it reports its status through setSave
+    const [saver] = useState(() => new Saver(sheetId, setSave));
 
   // ---- layout ----
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -99,6 +105,15 @@ export default function Grid({
     window.addEventListener("mouseup", stop);
     return () => window.removeEventListener("mouseup", stop);
   }, []);
+
+    // Warn before closing or reloading while edits are still unsaved.
+    useEffect(() => {
+      const warn = (e: BeforeUnloadEvent) => {
+        if (saver.pending > 0) e.preventDefault();
+      };
+      window.addEventListener("beforeunload", warn);
+      return () => window.removeEventListener("beforeunload", warn);
+    }, [saver]);
 
   // Keep viewportH equal to the scroll area's real height, including when
   // the window is resized. The observer also fires once on start.
@@ -202,12 +217,13 @@ function scrollToCell(pos: CellPos, center = false) {
 }
   
 
-  // ---- editing and history ----
-  // Every user edit goes through here: record it, then apply it.
+  // Every user edit goes through here: record it, apply it, queue it for saving.
   function setCell(addr: string, value: string) {
     const before = sheet.raw[addr] ?? "";
+    if (value === before) return; // nothing changed, so nothing to record or save
     history.record([{ addr, before, after: value }]);
     setRecalculated(sheet.setCell(addr, value));
+    saver.markDirty([[addr, value]]);
     setVersion((v) => v + 1);
   }
 
@@ -217,9 +233,13 @@ function scrollToCell(pos: CellPos, center = false) {
     // (possible with paste), it ends on its original value.
     const ordered = direction === "undo" ? [...changes].reverse() : changes;
     let count = 0;
+    const touched: [string, string][] = [];
     for (const c of ordered) {
-      count = sheet.setCell(c.addr, direction === "undo" ? c.before : c.after);
+      const value = direction === "undo" ? c.before : c.after;
+      count = sheet.setCell(c.addr, value);
+      touched.push([c.addr, value]);
     }
+    saver.markDirty(touched); // undo and redo are edits too and must be saved
     setRecalculated(count);
     setVersion((v) => v + 1);
     setExtent(null); // undo/redo jumps to one cell, so drop any range
@@ -270,9 +290,9 @@ function goTo(text: string) {
 
   // ---- keyboard ----
   function onGridKeyDown(e: React.KeyboardEvent) {
-    // While editing, or when the key was typed in an input (cell editor,
-    // formula bar, checkbox), the input handles it.
-    if (draft !== null || e.target instanceof HTMLInputElement) return;
+    // Only handle keys while the grid itself has focus. Keys typed in an
+    // input (cell editor, formula bar, go-to box) or on a button belong to it.
+    if (draft !== null || e.target !== e.currentTarget) return;
 
     // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -427,6 +447,26 @@ function goTo(text: string) {
           />
           Freeze column A
         </label>
+        <span
+          className={`${styles.saveState} ${styles[save.status]}`}
+          role="status"
+        >
+          {save.status === "saved" && "All changes saved"}
+          {save.status === "saving" && "Saving…"}
+          {save.status === "failed" &&
+            `Couldn’t save ${save.pending} change${save.pending === 1 ? "" : "s"}`}
+        </span>
+        {save.status === "failed" && (
+          <button
+            className={styles.retry}
+            onClick={() => {
+              saver.retryNow();
+              refocus(); // so the arrow keys keep working
+            }}
+          >
+            Retry now
+          </button>
+        )}
         <span className={styles.stat}>recalculated: {recalculated}</span>
       </div>
 
