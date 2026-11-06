@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CellPos, colLabel, parseAddress, toAddress } from "@/lib/address";
 import { Sheet } from "@/lib/sheet";
 import { formatValue, isError } from "@/lib/evaluate";
@@ -35,7 +35,11 @@ const NAV_KEYS: Record<string, [number, number]> = {
 const clamp = (value: number, count: number) =>
   Math.max(0, Math.min(count - 1, value));
 
-export default function Grid() {
+export default function Grid({
+  initialCells,
+}: {
+  initialCells: Record<string, string>;
+}) {
   // ---- selection ----
   const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
   // Opposite corner of the selected range. null = just the active cell.
@@ -51,11 +55,15 @@ export default function Grid() {
   const rootRef = useRef<HTMLDivElement>(null);
 
   // ---- engine (created once, mutated in place) ----
-  const [sheet] = useState(() => new Sheet(ROWS, COLS));
+  const [sheet] = useState(() => {
+    const s = new Sheet(ROWS, COLS);
+    s.load(initialCells); // computes every cell once
+    return s;
+  });
   const [history] = useState(() => new History());
   // `sheet` is mutated in place, so React can't see changes. Bumping this
   // counter forces a re-render after each edit.
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   // Temporary: how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
 
@@ -109,7 +117,14 @@ const observer = new ResizeObserver(() => {
   const address = toAddress(active);
   const raw = sheet.raw[address] ?? "";
   const range = normalizeRange(active, extent ?? active);
-  const stats = rangeStats(range, sheet.values);
+  // Recomputed only when the selection or the data changes, not on every
+  // scroll. With a huge selection the loop is too long to run per render.
+  const { r1, c1, r2, c2 } = range;
+  const stats = useMemo(
+    () => rangeStats({ r1, c1, r2, c2 }, sheet.values),
+    // `sheet` is mutated in place, so `version` is what signals a data change
+    [r1, c1, r2, c2, sheet, version],
+  );
 
   // Columns share the space left of the row numbers, but never get narrower
 // than the minimum. A column the user dragged keeps its own width.

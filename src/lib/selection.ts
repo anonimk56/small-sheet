@@ -1,4 +1,4 @@
-import { CellPos, toAddress } from "./address";
+import { CellPos, colLabel, toAddress } from "./address";
 import { Value } from "./evaluate";
 
 // A rectangle of cells, inclusive. r1/c1 is the top-left corner.
@@ -36,9 +36,12 @@ export type Stats = { sum: number; count: number; average: number | null };
 export function rangeStats(range: Range, values: Record<string, Value>): Stats {
   let sum = 0;
   let count = 0;
+  // Build each column's letters once, not once per cell
+  const letters: string[] = [];
+  for (let col = range.c1; col <= range.c2; col++) letters.push(colLabel(col));
   for (let row = range.r1; row <= range.r2; row++) {
     for (let col = range.c1; col <= range.c2; col++) {
-      const v = values[toAddress({ row, col })];
+      const v = values[letters[col - range.c1] + (row + 1)];
       if (typeof v === "number") {
         sum += v;
         count++;

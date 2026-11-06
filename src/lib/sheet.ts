@@ -17,6 +17,28 @@ export class Sheet {
     readonly cols: number,
   ) {}
 
+    // Replace the whole sheet in one pass: register every cell and formula
+  // first, then compute everything once, in dependency order. Used when a
+  // sheet is opened. Order of the incoming cells doesn't matter.
+  load(cells: Record<string, string>): number {
+    this.raw = {};
+    this.values = {};
+    this.parsed.clear();
+    this.precedents.clear();
+    this.dependents.clear();
+
+    for (const [addr, input] of Object.entries(cells)) {
+      if (input === "") continue;
+      this.raw[addr] = input;
+      if (input.startsWith("=")) {
+        const result = parseFormula(input.slice(1));
+        this.parsed.set(addr, result);
+        if (result.ok) this.link(addr, this.refsOf(result.node));
+      }
+    }
+    return this.recalc(Object.keys(this.raw));
+  }
+
   // Change one cell. Returns how many cells were recomputed.
   setCell(addr: string, input: string): number {
     this.unlink(addr); // forget the old formula's dependencies
@@ -34,7 +56,7 @@ export class Sheet {
         this.parsed.delete(addr);
       }
     }
-    return this.recalc(addr);
+    return this.recalc([addr]);
   }
 
   // ---- graph bookkeeping ----
@@ -100,10 +122,10 @@ export class Sheet {
 
   // ---- recalculation ----
 
-  private recalc(start: string): number {
-    // 1. Affected set: start plus everything downstream (walk the dependents).
-    const affected = new Set<string>([start]);
-    const stack = [start];
+  private recalc(starts: string[]): number {
+    // 1. Affected set: the starting cells plus everything downstream.
+    const affected = new Set<string>(starts);
+    const stack = [...starts];
     while (stack.length > 0) {
       const a = stack.pop()!;
       for (const d of this.dependents.get(a) ?? []) {
