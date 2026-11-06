@@ -18,14 +18,24 @@ export class Saver {
   private failures = 0; // consecutive failed attempts
   private status: SaveStatus = "saved";
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private listeners = new Set<(info: SaveInfo) => void>();
 
-  constructor(
-    private sheetId: string,
-    private onChange: (info: SaveInfo) => void,
-  ) {}
+  constructor(private sheetId: string) {}
 
   get pending(): number {
     return this.dirty.size;
+  }
+
+  get info(): SaveInfo {
+    return { status: this.status, pending: this.dirty.size };
+  }
+
+  // Listen for status changes. Returns a function that stops listening.
+  subscribe(listener: (info: SaveInfo) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   // Call after every edit, undo or redo.
@@ -49,7 +59,8 @@ export class Saver {
   }
 
   private notify() {
-    this.onChange({ status: this.status, pending: this.dirty.size });
+    const info = this.info;
+    for (const listener of this.listeners) listener(info);
   }
 
   private setStatus(status: SaveStatus) {

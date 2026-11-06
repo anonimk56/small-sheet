@@ -2,18 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CellPos, colLabel, parseAddress, toAddress } from "@/lib/address";
-import { Sheet } from "@/lib/sheet";
 import { formatValue, isError } from "@/lib/evaluate";
-import { CellChange, History } from "@/lib/history";
+import { COLS, ROWS } from "@/lib/grid-size";
+import type { CellChange } from "@/lib/history";
+import type { SaveInfo } from "@/lib/saver";
 import {
   inRange,
   normalizeRange,
   rangeLabel,
   rangeStats,
 } from "@/lib/selection";
+import type { SheetDoc } from "@/lib/sheet-doc";
 import styles from "./Grid.module.css";
-import { COLS, ROWS } from "@/lib/grid-size";
-import { SaveInfo, Saver } from "@/lib/saver";
 
 // Layout constants, in pixels. Row positions are computed from these, so
 // they must match the heights used in the CSS.
@@ -34,15 +34,30 @@ const NAV_KEYS: Record<string, [number, number]> = {
 const clamp = (value: number, count: number) =>
   Math.max(0, Math.min(count - 1, value));
 
-export default function Grid({
-  sheetId,
-  initialCells,
-}: {
-  sheetId: string;
-  initialCells: Record<string, string>;
-}) {
+// "B7" -> a position, or null if it isn't a real cell of this sheet.
+function cellFromText(text: string | null): CellPos | null {
+  if (!text) return null;
+  const pos = parseAddress(text.trim().toUpperCase());
+  return pos && pos.row < ROWS && pos.col < COLS ? pos : null;
+}
+
+// Where to start: the cell in the URL (?cell=B7), else where this sheet was
+// last time, else A1.
+function initialCell(doc: SheetDoc): CellPos {
+  if (typeof window === "undefined") return { row: 0, col: 0 };
+  const fromUrl = new URLSearchParams(window.location.search).get("cell");
+  return (
+    cellFromText(fromUrl) ?? cellFromText(doc.lastCell) ?? { row: 0, col: 0 }
+  );
+}
+
+export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
+  // The sheet's data, undo history and saver outlive this component (they
+  // belong to the tab, not the screen), so they come in from outside.
+  const { sheet, history, saver } = doc;
+
   // ---- selection ----
-  const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
+  const [active, setActive] = useState<CellPos>(() => initialCell(doc));
   // Opposite corner of the selected range. null = just the active cell.
   const [extent, setExtent] = useState<CellPos | null>(null);
   // True while the mouse button is held after pressing on a cell.
@@ -55,23 +70,11 @@ export default function Grid({
   const [editSource, setEditSource] = useState<"cell" | "bar">("cell");
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // ---- engine (created once, mutated in place) ----
-  const [sheet] = useState(() => {
-    const s = new Sheet(ROWS, COLS);
-    s.load(initialCells); // computes every cell once
-    return s;
-  });
-  const [history] = useState(() => new History());
   // `sheet` is mutated in place, so React can't see changes. Bumping this
   // counter forces a re-render after each edit.
   const [version, setVersion] = useState(0);
   // Temporary: how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
-
-    // ---- saving ----
-    const [save, setSave] = useState<SaveInfo>({ status: "saved", pending: 0 });
-    // Created once; it reports its status through setSave
-    const [saver] = useState(() => new Saver(sheetId, setSave));
 
   // ---- layout ----
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -106,24 +109,15 @@ export default function Grid({
     return () => window.removeEventListener("mouseup", stop);
   }, []);
 
-    // Warn before closing or reloading while edits are still unsaved.
-    useEffect(() => {
-      const warn = (e: BeforeUnloadEvent) => {
-        if (saver.pending > 0) e.preventDefault();
-      };
-      window.addEventListener("beforeunload", warn);
-      return () => window.removeEventListener("beforeunload", warn);
-    }, [saver]);
-
-  // Keep viewportH equal to the scroll area's real height, including when
-  // the window is resized. The observer also fires once on start.
+  // Keep viewportH/viewportW equal to the scroll area's real size, including
+  // when the window is resized. The observer also fires once on start.
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-const observer = new ResizeObserver(() => {
-  setViewportH(el.clientHeight);
-  setViewportW(el.clientWidth); // clientWidth excludes the vertical scrollbar
-});
+    const observer = new ResizeObserver(() => {
+      setViewportH(el.clientHeight);
+      setViewportW(el.clientWidth); // clientWidth excludes the vertical scrollbar
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -138,16 +132,17 @@ const observer = new ResizeObserver(() => {
   const stats = useMemo(
     () => rangeStats({ r1, c1, r2, c2 }, sheet.values),
     // `sheet` is mutated in place, so `version` is what signals a data change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [r1, c1, r2, c2, sheet, version],
   );
 
   // Columns share the space left of the row numbers, but never get narrower
-// than the minimum. A column the user dragged keeps its own width.
-const autoWidth = Math.max(
-  MIN_AUTO_COL_W,
-  Math.floor((viewportW - ROW_HEADER_W) / COLS),
-);
-const colWidths = userWidths.map((w) => w ?? autoWidth);
+  // than the minimum. A column the user dragged keeps its own width.
+  const autoWidth = Math.max(
+    MIN_AUTO_COL_W,
+    Math.floor((viewportW - ROW_HEADER_W) / COLS),
+  );
+  const colWidths = userWidths.map((w) => w ?? autoWidth);
 
   const totalWidth = ROW_HEADER_W + colWidths.reduce((a, b) => a + b, 0);
   const visibleCount = Math.ceil(viewportH / ROW_H);
@@ -160,6 +155,18 @@ const colWidths = userWidths.map((w) => w ?? autoWidth);
   if (active.row < firstRow || active.row > lastRow) {
     rowsToRender.push(active.row);
   }
+
+  // ---- the URL says which cell ----
+  // Keep the address bar (and this sheet's remembered position) in step with
+  // the selection. replaceState swaps the current history entry instead of
+  // adding one, so ordinary moving around doesn't fill up the Back button.
+  useEffect(() => {
+    doc.rememberCell(address);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("cell") === address) return;
+    url.searchParams.set("cell", address);
+    window.history.replaceState(null, "", url);
+  }, [address, doc]);
 
   // ---- navigation ----
   function move(dRow: number, dCol: number) {
@@ -185,38 +192,65 @@ const colWidths = userWidths.map((w) => w ?? autoWidth);
 
   // Scroll the minimum amount needed to bring a cell fully into view,
   // allowing for the sticky header and the sticky left columns.
-// center=true is for big jumps (go-to-cell): the target lands mid-screen
-// instead of hugging the bottom edge.
-function scrollToCell(pos: CellPos, center = false) {
-  const el = scrollerRef.current;
-  if (!el) return;
+  // center=true is for big jumps (go-to-cell): the target lands mid-screen
+  // instead of hugging the bottom edge.
+  function scrollToCell(pos: CellPos, center = false) {
+    const el = scrollerRef.current;
+    if (!el) return;
 
-  // Vertical: row r starts r * ROW_H below the sticky header.
-  const rowTop = pos.row * ROW_H;
-  const rowBottom = rowTop + ROW_H;
-  const bodyHeight = el.clientHeight - HEADER_H;
-  if (center) {
-    el.scrollTop = Math.max(0, rowTop - (bodyHeight - ROW_H) / 2);
-  } else if (rowTop < el.scrollTop) {
-    el.scrollTop = rowTop;
-  } else if (rowBottom > el.scrollTop + bodyHeight) {
-    el.scrollTop = rowBottom - bodyHeight;
+    // Vertical: row r starts r * ROW_H below the sticky header.
+    const rowTop = pos.row * ROW_H;
+    const rowBottom = rowTop + ROW_H;
+    const bodyHeight = el.clientHeight - HEADER_H;
+    if (center) {
+      el.scrollTop = Math.max(0, rowTop - (bodyHeight - ROW_H) / 2);
+    } else if (rowTop < el.scrollTop) {
+      el.scrollTop = rowTop;
+    } else if (rowBottom > el.scrollTop + bodyHeight) {
+      el.scrollTop = rowBottom - bodyHeight;
+    }
+
+    // Horizontal: the row numbers (and column A when frozen) always cover
+    // the left edge, so a cell is only "visible" to the right of them.
+    if (frozen && pos.col === 0) return;
+    const stuck = ROW_HEADER_W + (frozen ? colWidths[0] : 0);
+    let left = ROW_HEADER_W;
+    for (let i = 0; i < pos.col; i++) left += colWidths[i];
+    const right = left + colWidths[pos.col];
+    if (left < el.scrollLeft + stuck) el.scrollLeft = left - stuck;
+    else if (right > el.scrollLeft + el.clientWidth) {
+      el.scrollLeft = right - el.clientWidth;
+    }
   }
 
-  // Horizontal: the row numbers (and column A when frozen) always cover
-  // the left edge, so a cell is only "visible" to the right of them.
-  if (frozen && pos.col === 0) return;
-  const stuck = ROW_HEADER_W + (frozen ? colWidths[0] : 0);
-  let left = ROW_HEADER_W;
-  for (let i = 0; i < pos.col; i++) left += colWidths[i];
-  const right = left + colWidths[pos.col];
-  if (left < el.scrollLeft + stuck) el.scrollLeft = left - stuck;
-  else if (right > el.scrollLeft + el.clientWidth) {
-    el.scrollLeft = right - el.clientWidth;
-  }
-}
-  
+  // The popstate and mount effects below call scrollToCell from a closure that
+  // would go stale, so they go through a ref that always holds the latest one.
+  const scrollToCellRef = useRef(scrollToCell);
+  useEffect(() => {
+    scrollToCellRef.current = scrollToCell;
+  });
 
+  // Opening a link such as /sheets/big?cell=A9000 must show that cell.
+  useEffect(() => {
+    scrollToCellRef.current(active, true);
+    // Only on mount: later moves scroll themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Back/Forward within this sheet: follow the cell in the URL.
+  useEffect(() => {
+    const onPop = () => {
+      const pos = cellFromText(new URLSearchParams(window.location.search).get("cell"));
+      if (!pos) return;
+      setActive(pos);
+      setExtent(null);
+      scrollToCellRef.current(pos, true);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // ---- editing and history ----
   // Every user edit goes through here: record it, apply it, queue it for saving.
   function setCell(addr: string, value: string) {
     const before = sheet.raw[addr] ?? "";
@@ -274,19 +308,26 @@ function scrollToCell(pos: CellPos, center = false) {
   }
 
   // Go-to-cell: "b7", "A9000"... Invalid input keeps the text and shows an error.
-function goTo(text: string) {
-  const pos = parseAddress(text.trim().toUpperCase());
-  if (pos && pos.row < ROWS && pos.col < COLS) {
-    setActive(pos);
-    setExtent(null);
-    scrollToCell(pos, true);
-    setAddressDraft(null);
-    setAddressInvalid(false);
-    refocus();
-  } else {
-    setAddressInvalid(true);
+  function goTo(text: string) {
+    const pos = cellFromText(text);
+    if (pos) {
+      if (toAddress(pos) !== address) {
+        // A jump is a place worth coming back to: give it its own history
+        // entry, so Back returns to the cell we left.
+        const url = new URL(window.location.href);
+        url.searchParams.set("cell", toAddress(pos));
+        window.history.pushState(null, "", url);
+      }
+      setActive(pos);
+      setExtent(null);
+      scrollToCell(pos, true);
+      setAddressDraft(null);
+      setAddressInvalid(false);
+      refocus();
+    } else {
+      setAddressInvalid(true);
+    }
   }
-}
 
   // ---- keyboard ----
   function onGridKeyDown(e: React.KeyboardEvent) {
@@ -392,39 +433,39 @@ function goTo(text: string) {
       }}
     >
       <div className={styles.bar}>
-      <input
-  ref={addressRef}
-  className={`${styles.address} ${addressInvalid ? styles.addressInvalid : ""}`}
-  value={addressDraft ?? address}
-  onChange={(e) => {
-    setAddressDraft(e.target.value);
-    setAddressInvalid(false);
-  }}
-  onFocus={(e) => {
-    commit(); // finish a pending cell edit first, so it lands in the right cell
-    setAddressDraft(address);
-    const el = e.currentTarget;
-    requestAnimationFrame(() => el.select()); // survives the mouse-up that follows a click
-  }}
-  onBlur={() => {
-    setAddressDraft(null); // clicking away cancels
-    setAddressInvalid(false);
-  }}
-  onKeyDown={(e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      goTo(addressDraft ?? address);
-    } else if (e.key === "Escape") {
-      setAddressDraft(null);
-      setAddressInvalid(false);
-      refocus();
-    }
-  }}
-  aria-label="Go to cell"
-  aria-invalid={addressInvalid}
-  spellCheck={false}
-  autoComplete="off"
-/>
+        <input
+          ref={addressRef}
+          className={`${styles.address} ${addressInvalid ? styles.addressInvalid : ""}`}
+          value={addressDraft ?? address}
+          onChange={(e) => {
+            setAddressDraft(e.target.value);
+            setAddressInvalid(false);
+          }}
+          onFocus={(e) => {
+            commit(); // finish a pending cell edit first, so it lands in the right cell
+            setAddressDraft(address);
+            const el = e.currentTarget;
+            requestAnimationFrame(() => el.select()); // survives the mouse-up that follows a click
+          }}
+          onBlur={() => {
+            setAddressDraft(null); // clicking away cancels
+            setAddressInvalid(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              goTo(addressDraft ?? address);
+            } else if (e.key === "Escape") {
+              setAddressDraft(null);
+              setAddressInvalid(false);
+              refocus();
+            }
+          }}
+          aria-label="Go to cell"
+          aria-invalid={addressInvalid}
+          spellCheck={false}
+          autoComplete="off"
+        />
         <input
           className={styles.formulaInput}
           value={draft ?? raw}

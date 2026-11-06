@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { applyChanges, parseChanges, readSheet } from "@/lib/store";
+import {
+  applyChanges,
+  parseChanges,
+  parseName,
+  readSheet,
+  renameSheet,
+} from "@/lib/store";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -41,4 +47,26 @@ export async function PUT(request: Request, { params }: Context) {
     return NextResponse.json({ error: "Sheet not found" }, { status: 404 });
   }
   return NextResponse.json({ savedAt: Date.now() });
+}
+
+// PATCH /api/sheets/budget with { name: "Q1 budget" }  (renames the tab)
+export async function PATCH(request: Request, { params }: Context) {
+  const { id } = await params;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const name = parseName(body);
+  if (!name) {
+    return NextResponse.json({ error: "Invalid name" }, { status: 400 });
+  }
+
+  const sheet = await renameSheet(id, name);
+  if (!sheet) {
+    return NextResponse.json({ error: "Sheet not found" }, { status: 404 });
+  }
+  return NextResponse.json({ sheet });
 }
