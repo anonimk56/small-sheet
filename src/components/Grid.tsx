@@ -84,7 +84,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   const [recalculated, setRecalculated] = useState(0);
 
     // A short note about what Copy or Paste just did (or why it refused)
-    const [message, setMessage] = useState<string | null>(null);
+    const [message, setMessage] = useState<{ text: string; kind: "info" | "error" } | null>(null);
 
   // ---- layout ----
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -101,6 +101,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   const [addressDraft, setAddressDraft] = useState<string | null>(null);
   const [addressInvalid, setAddressInvalid] = useState(false);
   const addressRef = useRef<HTMLInputElement>(null);
+
+  const formulaRef = useRef<HTMLInputElement>(null);
 
   const [frozen, setFrozen] = useState(false);
   const resizing = useRef<{
@@ -132,12 +134,13 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     return () => observer.disconnect();
   }, []);
 
-    // Let the message fade away on its own
-    useEffect(() => {
-      if (!message) return;
-      const timer = setTimeout(() => setMessage(null), 6000);
-      return () => clearTimeout(timer);
-    }, [message]);
+  // Information fades away on its own. An error stays until it is dismissed:
+  // a refused paste must never be something you could have missed.
+  useEffect(() => {
+    if (!message || message.kind === "error") return;
+    const timer = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
 
   // ---- derived values ----
   const address = toAddress(active);
@@ -171,6 +174,22 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // so an open cell editor (and its focus) isn't destroyed.
   if (active.row < firstRow || active.row > lastRow) {
     rowsToRender.push(active.row);
+  }
+
+    // What a screen reader says when the active cell changes: "B7, 42" or
+  // "B9, 2442900, formula =SUM(C9:F9)" or "A1, empty".
+  const activeValue = sheet.values[address];
+  const announcement = `${address}, ${formatValue(activeValue) || "empty"}${
+    raw.startsWith("=") ? `, formula ${raw}` : ""
+  }${isError(activeValue) ? ", error" : ""}`;
+
+  // Cheap emptiness test (stops at the first key instead of counting them all)
+  let isEmpty = true;
+  for (const key in sheet.raw) {
+    if (key) {
+      isEmpty = false;
+      break;
+    }
   }
 
   // ---- the URL says which cell ----
@@ -247,9 +266,14 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     scrollToCellRef.current = scrollToCell;
   });
 
-  // Opening a link such as /sheets/big?cell=A9000 must show that cell.
   useEffect(() => {
     scrollToCellRef.current(active, true);
+    // Take the keyboard, so typing and pasting work straight away, but never
+    // from a text field the person is already using.
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || focused.tagName === "A") {
+      rootRef.current?.focus({ preventScroll: true });
+    }
     // Only on mount: later moves scroll themselves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -313,26 +337,30 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   }
 
   // ---- copy and paste ----
-  // Both fire only while the grid itself has focus; inside an input (cell
-  // editor, formula bar) the browser copies and pastes text as usual.
-  function onCopy(e: React.ClipboardEvent) {
-    if (e.target !== e.currentTarget) return;
+  // These listen on the whole document, so they work wherever focus happens
+  // to be (a button, a tab, nothing at all), except inside a text field,
+  // where the browser copies and pastes text as usual.
+  function onCopy(e: ClipboardEvent) {
+    if (!e.clipboardData) return;
     e.preventDefault();
     const copied = copyRange(range, sheet.raw, sheet.values);
     e.clipboardData.setData("text/plain", copied.text);
     rememberCopy(copied); // so pasting here again keeps formulas
     const n = (r2 - r1 + 1) * (c2 - c1 + 1);
-    setMessage(`Copied ${n.toLocaleString("en-US")} cell${n === 1 ? "" : "s"}`);
+    setMessage({
+      kind: "info",
+      text: `Copied ${n.toLocaleString("en-US")} cell${n === 1 ? "" : "s"}`,
+    });
   }
 
-  function onPaste(e: React.ClipboardEvent) {
-    if (e.target !== e.currentTarget) return;
+  function onPaste(e: ClipboardEvent) {
+    if (!e.clipboardData) return;
     e.preventDefault();
     // Plain text only. Never "text/html": that is how a web page's markup
     // would get in, and nothing here would ever need it.
     const plan = planPaste(e.clipboardData.getData("text/plain"), range, sheet.raw);
     if (!plan.ok) {
-      setMessage(plan.error); // refused: nothing was changed
+      setMessage({ kind: "error", text: plan.error }); // refused: nothing changed
       return;
     }
     applyBatch(plan.changes);
@@ -345,8 +373,32 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         : { row: area.r2, col: area.c2 },
     );
     scrollToCell({ row: area.r1, col: area.c1 });
-    setMessage(describePaste(plan));
+    setMessage({ kind: "info", text: describePaste(plan) });
   }
+
+  // The listeners are added once, so they call through a ref that always
+  // holds this render's versions (which know the current selection).
+  const clipboardRef = useRef({ copy: onCopy, paste: onPaste });
+  useEffect(() => {
+    clipboardRef.current = { copy: onCopy, paste: onPaste };
+  });
+  useEffect(() => {
+    const inTextField = (target: EventTarget | null) =>
+      target instanceof Element &&
+      target.closest("input, textarea, select, [contenteditable]") !== null;
+    const copy = (e: ClipboardEvent) => {
+      if (!inTextField(e.target)) clipboardRef.current.copy(e);
+    };
+    const paste = (e: ClipboardEvent) => {
+      if (!inTextField(e.target)) clipboardRef.current.paste(e);
+    };
+    document.addEventListener("copy", copy);
+    document.addEventListener("paste", paste);
+    return () => {
+      document.removeEventListener("copy", copy);
+      document.removeEventListener("paste", paste);
+    };
+  }, []);
 
   function undo() {
     const entry = history.undo();
@@ -367,7 +419,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // The input unmounts when editing ends, so give focus back to the grid
   // or the arrow keys stop working.
   function refocus() {
-    rootRef.current?.focus();
+    rootRef.current?.focus({ preventScroll: true });
   }
 
   // Go-to-cell: "b7", "A9000"... Invalid input keeps the text and shows an error.
@@ -397,6 +449,14 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     // Only handle keys while the grid itself has focus. Keys typed in an
     // input (cell editor, formula bar, go-to box) or on a button belong to it.
     if (draft !== null || e.target !== e.currentTarget) return;
+
+        // F6: jump to the formula bar (Tab moves between cells, so it can't be
+    // used to leave the grid). Escape in the bar comes back here.
+    if (e.key === "F6") {
+      e.preventDefault();
+      formulaRef.current?.focus();
+      return;
+    }
 
     // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -489,14 +549,19 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       tabIndex={0}
       className={styles.root}
       onKeyDown={onGridKeyDown}
-      onCopy={onCopy}
-      onPaste={onPaste}
+      role="application"
+      aria-roledescription="spreadsheet"
+      aria-label="Spreadsheet"
       onMouseDown={(e) => {
         // Clicking anywhere else in the grid (a header, empty space) finishes
         // a pending edit.
         if (draft !== null && !(e.target instanceof HTMLInputElement)) commit();
       }}
     >
+            {/* Read out by screen readers each time the active cell changes */}
+            <div className={styles.srOnly} aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
       <div className={styles.bar}>
         <input
           ref={addressRef}
@@ -535,6 +600,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         />
         <input
           className={styles.formulaInput}
+          ref={formulaRef}
           value={draft ?? raw}
           onChange={(e) => {
             setEditSource("bar");
@@ -637,12 +703,16 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
                 const isActive = r === active.row && c === active.col;
                 const isSelected = !isActive && inRange(range, r, c);
                 const isFrozen = frozen && c === 0;
-                const value = sheet.values[toAddress({ row: r, col: c })];
+                const cellAddr = toAddress({ row: r, col: c });
+                const value = sheet.values[cellAddr];
                 const classes = [
                   styles.cell,
                   isFrozen ? styles.frozenCol : "",
                   isActive ? styles.active : "",
+                  isActive && draft !== null ? styles.editing : "",
                   isSelected ? styles.inRange : "",
+                  sheet.raw[cellAddr]?.startsWith("=") ? styles.computed : "",
+                  typeof value === "number" ? styles.number : "",
                   isError(value) ? styles.error : "",
                 ]
                   .filter(Boolean)
@@ -678,6 +748,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
                         setActive({ row: r, col: c });
                         setExtent(null);
                         dragging.current = true; // a drag may follow
+                        refocus(); // the grid owns the keyboard from here on
                       }
                     }}
                     onMouseEnter={() => {
@@ -699,13 +770,33 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         <span>
           Average: {stats.average !== null ? formatValue(stats.average) : "—"}
         </span>
-        <span>Count: {stats.count}</span>
-        {message && (
-          <span className={styles.message} role="status">
-            {message}
+        <span>
+          Count: {stats.count}
           </span>
-        )}
       </div>
+
+      {isEmpty && (
+        <div className={styles.emptyHint}>
+          <strong>This sheet is empty</strong>
+          Select a cell and start typing, or paste a block from another app.
+        </div>
+      )}
+
+      {message && (
+        <div
+          className={`${styles.toast} ${message.kind === "error" ? styles.toastError : ""}`}
+          role={message.kind === "error" ? "alert" : "status"}
+        >
+          <span>{message.text}</span>
+          <button
+            className={styles.toastClose}
+            onClick={() => setMessage(null)}
+            aria-label="Dismiss message"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }

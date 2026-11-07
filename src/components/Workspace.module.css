@@ -18,7 +18,7 @@
     height: 100%;
     padding: 0 24px;
     text-align: center;
-    color: #6b7a76;
+    color: var(--muted);
   }
   
   .notice a {
@@ -28,10 +28,70 @@
   
   .button {
     height: 32px;
-    padding: 0 14px;
-    border: 1px solid var(--border);
+    padding: 0 16px;
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     background: var(--bg);
     font: inherit;
     cursor: pointer;
   }
+
+  /* ---- full-page screens: loading, not found, failure ---- */
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.screen h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.screen p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.link {
+  padding: 8px 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  color: var(--active);
+  text-decoration: none;
+}
+
+.link:hover {
+  background: var(--hover);
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 8px;
+  border: 3px solid var(--border);
+  border-top-color: var(--active);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,11 +1,81 @@
 :root {
-  --border: #d3dbd8;
-  --header-bg: #f1f4f3;
-  --active: #2e7bd6;
+  color-scheme: light dark;
+
+  /* colour */
   --bg: #ffffff;
+  --header-bg: #f1f4f3;
+  --text: #1a2321;
+  --muted: #55625e;
+  --border: #d3dbd8; /* grid lines */
+  --control-border: #7d8a86; /* edges of inputs and buttons */
+  --active: #2e7bd6;
+  --tint: rgba(46, 123, 214, 0.14);
+  --tint-strong: rgba(46, 123, 214, 0.4);
+  --hover: rgba(0, 0, 0, 0.05);
+  --shadow: rgba(0, 0, 0, 0.3);
+  --ok: #1e7a45;
+  --warn: #8a6d1d;
+  --error: #b3261e;
+  --computed: #6f4fc4;
+
+  /* one spacing scale: 4, 8, 12, 16, 24 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  /* one type scale */
+  --text-xs: 12px;
+  --text-sm: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12171a;
+    --header-bg: #1b2227;
+    --text: #e6ecea;
+    --muted: #9aa8a4;
+    --border: #2b343a;
+    --control-border: #6f7d79;
+    --active: #6ab0ff;
+    --tint: rgba(106, 176, 255, 0.2);
+    --tint-strong: rgba(106, 176, 255, 0.5);
+    --hover: rgba(255, 255, 255, 0.07);
+    --shadow: rgba(0, 0, 0, 0.6);
+    --ok: #5fd08f;
+    --warn: #e0b84a;
+    --error: #ff8a80;
+    --computed: #b39bff;
+  }
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, sans-serif;
+  font-size: var(--text-sm);
+}
+
+/* Focus is always visible, for anything reachable by keyboard */
+:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+}
+
+/* No animation or smooth scrolling for people who ask the system for less */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

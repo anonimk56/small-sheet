@@ -147,36 +147,45 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
     body = <Grid key={id} doc={doc} save={saves[id] ?? doc.saver.info} />;
   } else if (load?.kind === "notFound") {
     body = (
-      <div className={styles.notice}>
-        <p>There is no sheet called “{id}”.</p>
+      <div className={styles.screen}>
+        <h1>This sheet doesn’t exist</h1>
         <p>
+          There is no sheet called “{id}”. It may have been mistyped. Open one of
+          these instead:
+        </p>
+        <div className={styles.actions}>
           {sheets?.map((s) => (
-            <Link key={s.id} href={`/sheets/${s.id}`}>
+            <Link key={s.id} href={`/sheets/${s.id}`} className={styles.link}>
               {s.name}
             </Link>
           ))}
-        </p>
+        </div>
       </div>
     );
   } else if (load?.kind === "error") {
     body = (
-      <div className={styles.notice}>
-        <p>Couldn’t load this sheet.</p>
-        <button
-          className={styles.button}
-          onClick={() => {
-            setLoads((prev) => ({ ...prev, [id]: { kind: "loading" } }));
-            setAttempt((a) => a + 1);
-          }}
-        >
-          Try again
-        </button>
+      <div className={styles.screen} role="alert">
+        <h1>Couldn’t open this sheet</h1>
+        <p>The server didn’t answer. Your other sheets and any unsaved edits are safe.</p>
+        <div className={styles.actions}>
+          <button
+            className={styles.button}
+            onClick={() => {
+              setLoads((prev) => ({ ...prev, [id]: { kind: "loading" } }));
+              setAttempt((a) => a + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   } else {
     body = (
-      <div className={styles.notice} role="status">
-        Loading sheet…
+      <div className={styles.screen} role="status" aria-busy="true">
+        <div className={styles.spinner} aria-hidden="true" />
+        <h1>Opening sheet…</h1>
+        <p>Big sheets can take a moment.</p>
       </div>
     );
   }

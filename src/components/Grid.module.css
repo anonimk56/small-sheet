@@ -1,7 +1,9 @@
 .root {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .root:focus {
@@ -13,7 +15,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -26,7 +28,7 @@
   font-family: monospace;
   font-size: inherit;
   font-weight: 600;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
   background: var(--header-bg);
 }
@@ -39,7 +41,7 @@
 
 .addressInvalid,
 .addressInvalid:focus {
-  outline: 2px solid #c0392b;
+  outline: 2px solid var(--error);
   outline-offset: -1px;
 }
 
@@ -49,7 +51,7 @@
   height: 28px;
   box-sizing: border-box;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 4px;
   font-family: monospace;
 }
@@ -61,7 +63,7 @@
 
 .stat {
   font-size: 12px;
-  color: #6b7a76;
+  color: var(--muted);
   white-space: nowrap;
 }
 
@@ -127,7 +129,7 @@
 }
 
 .resizeHandle:hover {
-  background: rgba(46, 123, 214, 0.4);
+  background: var(--tint-strong);
 }
 
 /* ---- rows and cells ---- */
@@ -171,7 +173,7 @@
 .frozenCol {
   position: sticky;
   z-index: 1;
-  box-shadow: 2px 0 3px -2px rgba(0, 0, 0, 0.3);
+  box-shadow: 2px 0 3px -2px var(--shadow);
 }
 
 .active {
@@ -182,13 +184,13 @@
 /* A gradient overlay, not "background", so the opaque base color stays */
 .inRange {
   background-image: linear-gradient(
-    rgba(46, 123, 214, 0.12),
-    rgba(46, 123, 214, 0.12)
+    var(--tint),
+    var(--tint)
   );
 }
 
 .error {
-  color: #c0392b;
+  color: var(--error);
 }
 
 .editor {
@@ -206,9 +208,10 @@
 
 /* ---- status bar ---- */
 .statusBar {
+  flex: none;
   display: flex;
   gap: 24px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border);
   font-family: monospace;
   font-size: 12px;
@@ -232,33 +235,168 @@
 }
 
 .saved {
-  color: #2e7d4f;
+  color: var(--ok);
 }
 
 .saving {
-  color: #8a6d1d;
+  color: var(--warn);
 }
 
 .failed {
-  color: #c0392b;
+  color: var(--error);
   font-weight: 600;
 }
 
 .retry {
   height: 28px;
-  padding: 0 10px;
-  border: 1px solid #c0392b;
+  padding: 0 12px;
+  border: 1px solid var(--error);
   border-radius: 4px;
   background: var(--bg);
-  color: #c0392b;
+  color: var(--error);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
-/* ---- copy / paste message ---- */
-.message {
-  margin-left: auto;
-  font-family: system-ui, sans-serif;
-  color: #6b7a76;
+/* ---- cell states: active, selected, editing, computed, broken ---- */
+.root {
+  position: relative;
+}
+
+.cell {
+  position: relative; /* anchors the markers below */
+  font-variant-numeric: tabular-nums;
+}
+
+/* declared after .cell so a frozen column stays sticky */
+.cell.frozenCol {
+  position: sticky;
+}
+
+.number {
+  text-align: right;
+}
+
+/* computed: shows a result, holds a formula. A bar down its left edge. */
+.computed::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--computed);
+}
+
+/* broken: red text and a flag in the corner */
+.error {
+  font-weight: 600;
+}
+
+.error::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-top: 8px solid var(--error);
+  border-left: 8px solid transparent;
+}
+
+/* editing: lifted off the grid */
+.editing {
+  z-index: 3;
+  background: var(--bg);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+/* ---- notices ---- */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.emptyHint {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  padding: 0 24px;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none; /* never gets in the way of clicking the grid */
+}
+
+.emptyHint strong {
+  color: var(--text);
+}
+
+.toast {
+  position: absolute;
+  bottom: 56px; /* clear of the status bar */
+  left: 50%;
+  z-index: 10;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(640px, calc(100% - 32px));
+  padding: 8px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--header-bg);
+  color: var(--text);
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+.toastError {
+  border-color: var(--error);
+}
+
+.toastClose {
+  flex: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ---- narrower screens ---- */
+@media (max-width: 900px) {
+  .stat {
+    display: none; /* the "recalculated" counter is a developer aid */
+  }
+
+  .bar {
+    flex-wrap: wrap;
+  }
+
+  .formulaInput {
+    flex: 1 1 160px;
+  }
+}
+
+@media (max-width: 600px) {
+  .toggle {
+    display: none;
+  }
+
+  .saveState {
+    min-width: 0;
+  }
 }
