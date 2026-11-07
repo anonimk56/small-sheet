@@ -95,3 +95,12 @@
     transform: rotate(360deg);
   }
 }
+
+.link,
+.button {
+  transition: background-color 120ms ease;
+}
+
+.button:hover {
+  background: var(--hover);
+}

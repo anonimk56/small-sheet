@@ -398,3 +398,54 @@
     min-width: 0;
   }
 }
+
+/* ---- nothing jumps when a value changes ---- */
+.stat {
+  min-width: 128px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusBar > span {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusBar > span:nth-child(1) {
+  min-width: 14ch; /* the selection, up to A1:L10000 */
+}
+
+.statusBar > span:nth-child(2),
+.statusBar > span:nth-child(3) {
+  min-width: 26ch; /* "Sum: 14776214.991" and longer */
+}
+
+.statusBar > span:nth-child(4) {
+  min-width: 12ch;
+}
+
+/* ---- small transitions (switched off by prefers-reduced-motion) ---- */
+.retry,
+.toastClose {
+  transition: background-color 120ms ease;
+}
+
+.retry:hover,
+.toastClose:hover {
+  background: var(--hover);
+}
+
+.toast {
+  animation: toast-in 160ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}

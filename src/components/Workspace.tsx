@@ -98,6 +98,30 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("beforeunload", warn);
   }, [docs]);
 
+    // F6 moves between the regions of the page: grid, formula bar, tabs. The grid
+  // handles its own F6 (grid -> formula bar); this covers leaving the formula
+  // bar (-> tabs) and leaving the tabs (-> grid). Tab can't do this job,
+  // because inside the grid Tab moves between cells.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F6") return;
+      const active = document.activeElement;
+      if (active instanceof Element && active.closest('[role="grid"]')) return;
+      e.preventDefault();
+      const toGrid = () => document.querySelector<HTMLElement>('[role="grid"]')?.focus();
+      if (active instanceof Element && active.closest('[role="group"]')) {
+        // in the toolbar: go to the current tab
+        const tab = document.querySelector<HTMLElement>('nav [aria-current="page"]');
+        if (tab) tab.focus();
+        else toGrid();
+      } else {
+        toGrid(); // in the tabs, or nowhere in particular: back to the grid
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   async function addSheet() {
     try {
       const res = await fetch("/api/sheets", { method: "POST" });

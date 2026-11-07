@@ -467,6 +467,12 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     // Cmd+Z / Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const key = e.key.toLowerCase();
+      if (key === "a") {
+        e.preventDefault(); // select the whole sheet
+        setActive({ row: 0, col: 0 });
+        setExtent({ row: ROWS - 1, col: COLS - 1 });
+        return;
+      }
       if (key === "g") {
         e.preventDefault(); // also stops the browser's "find next"
         addressRef.current?.focus();
@@ -483,6 +489,27 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         redo();
         return;
       }
+    }
+
+        // Big jumps, for a 10,000-row sheet: Page Up/Down, Home/End, and
+    // Cmd/Ctrl+arrows to the edge of the sheet (Cmd/Ctrl+Home is A1).
+    const mod = e.metaKey || e.ctrlKey;
+    const page = Math.max(1, Math.floor((viewportH - HEADER_H) / ROW_H) - 1);
+    let jump: CellPos | null = null;
+    if (e.key === "PageDown") jump = { row: clamp(active.row + page, ROWS), col: active.col };
+    else if (e.key === "PageUp") jump = { row: clamp(active.row - page, ROWS), col: active.col };
+    else if (e.key === "Home") jump = { row: mod ? 0 : active.row, col: 0 };
+    else if (e.key === "End") jump = { row: mod ? ROWS - 1 : active.row, col: COLS - 1 };
+    else if (mod && e.key === "ArrowUp") jump = { row: 0, col: active.col };
+    else if (mod && e.key === "ArrowDown") jump = { row: ROWS - 1, col: active.col };
+    else if (mod && e.key === "ArrowLeft") jump = { row: active.row, col: 0 };
+    else if (mod && e.key === "ArrowRight") jump = { row: active.row, col: COLS - 1 };
+    if (jump) {
+      e.preventDefault();
+      setActive(jump);
+      setExtent(null);
+      scrollToCell(jump);
+      return;
     }
 
     const nav = NAV_KEYS[e.key];
@@ -512,7 +539,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     if (e.key === "Enter") {
       e.preventDefault();
       commit();
-      move(1, 0);
+      move(e.shiftKey ? -1 : 1, 0); // Shift+Enter goes up, like other spreadsheets
       refocus();
     } else if (e.key === "Tab") {
       e.preventDefault();
