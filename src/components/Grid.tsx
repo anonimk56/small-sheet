@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { CellPos, colLabel, parseAddress, toAddress } from "@/lib/address";
 import { formatValue, isError } from "@/lib/evaluate";
 import { COLS, ROWS } from "@/lib/grid-size";
@@ -75,7 +75,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   const [draft, setDraft] = useState<string | null>(null);
   // Where the current edit is happening: inside the cell or in the formula bar.
   const [editSource, setEditSource] = useState<"cell" | "bar">("cell");
-  const rootRef = useRef<HTMLDivElement>(null);
+  // Prefix for cell ids: aria-activedescendant points at the active cell by id.
+  const gridId = useId();
 
   // `sheet` is mutated in place, so React can't see changes. Bumping this
   // counter forces a re-render after each edit.
@@ -174,14 +175,19 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // so an open cell editor (and its focus) isn't destroyed.
   if (active.row < firstRow || active.row > lastRow) {
     rowsToRender.push(active.row);
+    rowsToRender.sort((a, b) => a - b); // keep DOM order = row order for screen readers
   }
 
-    // What a screen reader says when the active cell changes: "B7, 42" or
-  // "B9, 2442900, formula =SUM(C9:F9)" or "A1, empty".
+  // The grid itself makes a screen reader read the active cell (its column,
+  // row and value, via aria-activedescendant). This live region adds only what
+  // that can't carry: the formula behind a computed value, or that it is an error.
   const activeValue = sheet.values[address];
-  const announcement = `${address}, ${formatValue(activeValue) || "empty"}${
-    raw.startsWith("=") ? `, formula ${raw}` : ""
-  }${isError(activeValue) ? ", error" : ""}`;
+  const announcement = [
+    raw.startsWith("=") ? `formula ${raw}` : "",
+    isError(activeValue) ? "error" : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   // Cheap emptiness test (stops at the first key instead of counting them all)
   let isEmpty = true;
@@ -272,7 +278,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     // from a text field the person is already using.
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.tagName === "A") {
-      rootRef.current?.focus({ preventScroll: true });
+      scrollerRef.current?.focus({ preventScroll: true });
     }
     // Only on mount: later moves scroll themselves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -419,7 +425,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // The input unmounts when editing ends, so give focus back to the grid
   // or the arrow keys stop working.
   function refocus() {
-    rootRef.current?.focus({ preventScroll: true });
+    scrollerRef.current?.focus({ preventScroll: true });
   }
 
   // Go-to-cell: "b7", "A9000"... Invalid input keeps the text and shows an error.
@@ -545,12 +551,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // ---- render ----
   return (
     <div
-      ref={rootRef}
-      tabIndex={0}
       className={styles.root}
-      onKeyDown={onGridKeyDown}
-      role="application"
-      aria-roledescription="spreadsheet"
+      role="group"
       aria-label="Spreadsheet"
       onMouseDown={(e) => {
         // Clicking anywhere else in the grid (a header, empty space) finishes
@@ -558,8 +560,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         if (draft !== null && !(e.target instanceof HTMLInputElement)) commit();
       }}
     >
-            {/* Read out by screen readers each time the active cell changes */}
-            <div className={styles.srOnly} aria-live="polite" aria-atomic="true">
+      {/* Read out by screen readers when the active cell holds a formula or an error */}
+      <div className={styles.srOnly} aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
       <div className={styles.bar}>
@@ -649,6 +651,17 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       <div
         ref={scrollerRef}
         className={styles.scroller}
+        // The scroller is the grid, and the one element that holds keyboard
+        // focus. The active cell is announced via aria-activedescendant, so
+        // focus never has to move between the (virtualized) cells.
+        role="grid"
+        tabIndex={0}
+        aria-label="Spreadsheet cells"
+        aria-rowcount={ROWS + 1} // +1: the column-letter row
+        aria-colcount={COLS + 1} // +1: the row-number column
+        aria-multiselectable="true"
+        aria-activedescendant={`${gridId}-${address}`}
+        onKeyDown={onGridKeyDown}
         onScroll={(e) =>
           setScrollRow(Math.floor(e.currentTarget.scrollTop / ROW_H))
         }
@@ -659,13 +672,26 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
           className={styles.sizer}
           style={{ width: totalWidth, height: HEADER_H + ROWS * ROW_H }}
         >
-          <div className={styles.headerRow} style={{ height: HEADER_H }}>
-            <div className={styles.corner} style={{ width: ROW_HEADER_W }} />
+          <div
+            className={styles.headerRow}
+            style={{ height: HEADER_H }}
+            role="row"
+            aria-rowindex={1}
+          >
+            <div
+              className={styles.corner}
+              style={{ width: ROW_HEADER_W }}
+              role="columnheader"
+              aria-colindex={1}
+              aria-label="Row"
+            />
             {colWidths.map((w, c) => {
               const isFrozen = frozen && c === 0;
               return (
                 <div
                   key={c}
+                  role="columnheader"
+                  aria-colindex={c + 2}
                   className={`${styles.colHeader} ${
                     isFrozen ? styles.frozenCol : ""
                   }`}
@@ -676,6 +702,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
                   {colLabel(c)}
                   <div
                     className={styles.resizeHandle}
+                    aria-hidden="true"
                     onPointerDown={(e) => onResizeDown(e, c)}
                     onPointerMove={onResizeMove}
                     onPointerUp={onResizeEnd}
@@ -689,6 +716,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
           {rowsToRender.map((r) => (
             <div
               key={r}
+              role="row"
+              aria-rowindex={r + 2}
               className={styles.row}
               style={{
                 top: HEADER_H + r * ROW_H,
@@ -696,7 +725,12 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
                 width: totalWidth,
               }}
             >
-              <div className={styles.rowHeader} style={{ width: ROW_HEADER_W }}>
+              <div
+                className={styles.rowHeader}
+                style={{ width: ROW_HEADER_W }}
+                role="rowheader"
+                aria-colindex={1}
+              >
                 {r + 1}
               </div>
               {colWidths.map((w, c) => {
@@ -735,6 +769,10 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
                 return (
                   <div
                     key={c}
+                    id={`${gridId}-${cellAddr}`}
+                    role="gridcell"
+                    aria-colindex={c + 2}
+                    aria-selected={isActive || isSelected}
                     className={classes}
                     style={
                       isFrozen ? { width: w, left: ROW_HEADER_W } : { width: w }
