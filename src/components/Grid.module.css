@@ -255,3 +255,10 @@
   font-size: 12px;
   cursor: pointer;
 }
+
+/* ---- copy / paste message ---- */
+.message {
+  margin-left: auto;
+  font-family: system-ui, sans-serif;
+  color: #6b7a76;
+}

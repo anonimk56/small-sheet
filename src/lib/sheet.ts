@@ -41,22 +41,37 @@ export class Sheet {
 
   // Change one cell. Returns how many cells were recomputed.
   setCell(addr: string, input: string): number {
-    this.unlink(addr); // forget the old formula's dependencies
+    return this.setMany([[addr, input]]);
+  }
 
+  // Change many cells at once (a paste, an undo) and recompute ONCE, in
+  // dependency order. Calling setCell in a loop would repeat the whole
+  // recalculation for every cell. If a cell appears twice, the later one wins.
+  setMany(changes: Iterable<[string, string]>): number {
+    const touched: string[] = [];
+    for (const [addr, input] of changes) {
+      this.assign(addr, input);
+      touched.push(addr);
+    }
+    return this.recalc(touched);
+  }
+
+  // Store one cell's new text and rebuild its edges in the graph.
+  private assign(addr: string, input: string) {
+    this.unlink(addr); // forget the old formula's dependencies
     if (input === "") {
       delete this.raw[addr];
       this.parsed.delete(addr);
-    } else {
-      this.raw[addr] = input;
-      if (input.startsWith("=")) {
-        const result = parseFormula(input.slice(1));
-        this.parsed.set(addr, result);
-        if (result.ok) this.link(addr, this.refsOf(result.node));
-      } else {
-        this.parsed.delete(addr);
-      }
+      return;
     }
-    return this.recalc([addr]);
+    this.raw[addr] = input;
+    if (input.startsWith("=")) {
+      const result = parseFormula(input.slice(1));
+      this.parsed.set(addr, result);
+      if (result.ok) this.link(addr, this.refsOf(result.node));
+    } else {
+      this.parsed.delete(addr);
+    }
   }
 
   // ---- graph bookkeeping ----

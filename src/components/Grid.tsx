@@ -14,6 +14,13 @@ import {
 } from "@/lib/selection";
 import type { SheetDoc } from "@/lib/sheet-doc";
 import styles from "./Grid.module.css";
+import {
+  copyRange,
+  describePaste,
+  planClear,
+  planPaste,
+  rememberCopy,
+} from "@/lib/clipboard";
 
 // Layout constants, in pixels. Row positions are computed from these, so
 // they must match the heights used in the CSS.
@@ -76,6 +83,9 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // Temporary: how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
 
+    // A short note about what Copy or Paste just did (or why it refused)
+    const [message, setMessage] = useState<string | null>(null);
+
   // ---- layout ----
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Index of the first row in view. Storing the row (not the pixel offset)
@@ -85,7 +95,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   const [viewportW, setViewportW] = useState(1200); // replaced by the real width on mount
   // null = "share the available width"; a number = the user dragged this column
   const [userWidths, setUserWidths] = useState<(number | null)[]>(() =>
-    Array.from({ length: COLS }, () => null),
+    Array.from({ length: COLS }, () => null)
   );
   // Go-to-cell box: the text being typed (null = not editing) and whether it is invalid
   const [addressDraft, setAddressDraft] = useState<string | null>(null);
@@ -122,6 +132,13 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     return () => observer.disconnect();
   }, []);
 
+    // Let the message fade away on its own
+    useEffect(() => {
+      if (!message) return;
+      const timer = setTimeout(() => setMessage(null), 6000);
+      return () => clearTimeout(timer);
+    }, [message]);
+
   // ---- derived values ----
   const address = toAddress(active);
   const raw = sheet.raw[address] ?? "";
@@ -133,14 +150,14 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     () => rangeStats({ r1, c1, r2, c2 }, sheet.values),
     // `sheet` is mutated in place, so `version` is what signals a data change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [r1, c1, r2, c2, sheet, version],
+    [r1, c1, r2, c2, sheet, version]
   );
 
   // Columns share the space left of the row numbers, but never get narrower
   // than the minimum. A column the user dragged keeps its own width.
   const autoWidth = Math.max(
     MIN_AUTO_COL_W,
-    Math.floor((viewportW - ROW_HEADER_W) / COLS),
+    Math.floor((viewportW - ROW_HEADER_W) / COLS)
   );
   const colWidths = userWidths.map((w) => w ?? autoWidth);
 
@@ -240,7 +257,9 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // Back/Forward within this sheet: follow the cell in the URL.
   useEffect(() => {
     const onPop = () => {
-      const pos = cellFromText(new URLSearchParams(window.location.search).get("cell"));
+      const pos = cellFromText(
+        new URLSearchParams(window.location.search).get("cell")
+      );
       if (!pos) return;
       setActive(pos);
       setExtent(null);
@@ -261,20 +280,28 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     setVersion((v) => v + 1);
   }
 
+  // One user action that changes many cells (paste, clear a range): ONE undo
+  // step, ONE recalculation, ONE save request, however many cells it touches.
+  function applyBatch(changes: CellChange[]) {
+    if (changes.length === 0) return;
+    history.record(changes);
+    const edits = changes.map((c): [string, string] => [c.addr, c.after]);
+    setRecalculated(sheet.setMany(edits));
+    saver.markDirty(edits);
+    setVersion((v) => v + 1);
+  }
+
   // Replays an entry. Undo applies "before" values, redo applies "after".
   function applyChanges(changes: CellChange[], direction: "undo" | "redo") {
-    // Undo walks backwards so that if one cell appears twice in an entry
-    // (possible with paste), it ends on its original value.
+    // Undo walks backwards so that if one cell appears twice in an entry,
+    // it ends on its original value.
     const ordered = direction === "undo" ? [...changes].reverse() : changes;
-    let count = 0;
-    const touched: [string, string][] = [];
-    for (const c of ordered) {
-      const value = direction === "undo" ? c.before : c.after;
-      count = sheet.setCell(c.addr, value);
-      touched.push([c.addr, value]);
-    }
-    saver.markDirty(touched); // undo and redo are edits too and must be saved
-    setRecalculated(count);
+    const edits = ordered.map((c): [string, string] => [
+      c.addr,
+      direction === "undo" ? c.before : c.after,
+    ]);
+    setRecalculated(sheet.setMany(edits)); // one pass, even for a 50,000-cell paste
+    saver.markDirty(edits); // undo and redo are edits too and must be saved
     setVersion((v) => v + 1);
     setExtent(null); // undo/redo jumps to one cell, so drop any range
     // Move the selection to the changed cell so you can see what happened
@@ -283,6 +310,42 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       setActive(pos);
       scrollToCell(pos);
     }
+  }
+
+  // ---- copy and paste ----
+  // Both fire only while the grid itself has focus; inside an input (cell
+  // editor, formula bar) the browser copies and pastes text as usual.
+  function onCopy(e: React.ClipboardEvent) {
+    if (e.target !== e.currentTarget) return;
+    e.preventDefault();
+    const copied = copyRange(range, sheet.raw, sheet.values);
+    e.clipboardData.setData("text/plain", copied.text);
+    rememberCopy(copied); // so pasting here again keeps formulas
+    const n = (r2 - r1 + 1) * (c2 - c1 + 1);
+    setMessage(`Copied ${n.toLocaleString("en-US")} cell${n === 1 ? "" : "s"}`);
+  }
+
+  function onPaste(e: React.ClipboardEvent) {
+    if (e.target !== e.currentTarget) return;
+    e.preventDefault();
+    // Plain text only. Never "text/html": that is how a web page's markup
+    // would get in, and nothing here would ever need it.
+    const plan = planPaste(e.clipboardData.getData("text/plain"), range, sheet.raw);
+    if (!plan.ok) {
+      setMessage(plan.error); // refused: nothing was changed
+      return;
+    }
+    applyBatch(plan.changes);
+    // Select what was pasted, like other spreadsheets do
+    const { area } = plan;
+    setActive({ row: area.r1, col: area.c1 });
+    setExtent(
+      area.r1 === area.r2 && area.c1 === area.c2
+        ? null
+        : { row: area.r2, col: area.c2 },
+    );
+    scrollToCell({ row: area.r1, col: area.c1 });
+    setMessage(describePaste(plan));
   }
 
   function undo() {
@@ -370,7 +433,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       setEditSource("cell");
       setDraft(raw);
     } else if (e.key === "Backspace" || e.key === "Delete") {
-      setCell(address, "");
+      applyBatch(planClear(range, sheet.raw)); // the whole selection, one undo step
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       scrollToCell(active);
@@ -426,6 +489,8 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       tabIndex={0}
       className={styles.root}
       onKeyDown={onGridKeyDown}
+      onCopy={onCopy}
+      onPaste={onPaste}
       onMouseDown={(e) => {
         // Clicking anywhere else in the grid (a header, empty space) finishes
         // a pending edit.
@@ -435,7 +500,9 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       <div className={styles.bar}>
         <input
           ref={addressRef}
-          className={`${styles.address} ${addressInvalid ? styles.addressInvalid : ""}`}
+          className={`${styles.address} ${
+            addressInvalid ? styles.addressInvalid : ""
+          }`}
           value={addressDraft ?? address}
           onChange={(e) => {
             setAddressDraft(e.target.value);
@@ -495,7 +562,9 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
           {save.status === "saved" && "All changes saved"}
           {save.status === "saving" && "Saving…"}
           {save.status === "failed" &&
-            `Couldn’t save ${save.pending} change${save.pending === 1 ? "" : "s"}`}
+            `Couldn’t save ${save.pending} change${
+              save.pending === 1 ? "" : "s"
+            }`}
         </span>
         {save.status === "failed" && (
           <button
@@ -531,8 +600,12 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
               return (
                 <div
                   key={c}
-                  className={`${styles.colHeader} ${isFrozen ? styles.frozenCol : ""}`}
-                  style={isFrozen ? { width: w, left: ROW_HEADER_W } : { width: w }}
+                  className={`${styles.colHeader} ${
+                    isFrozen ? styles.frozenCol : ""
+                  }`}
+                  style={
+                    isFrozen ? { width: w, left: ROW_HEADER_W } : { width: w }
+                  }
                 >
                   {colLabel(c)}
                   <div
@@ -627,6 +700,11 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
           Average: {stats.average !== null ? formatValue(stats.average) : "—"}
         </span>
         <span>Count: {stats.count}</span>
+        {message && (
+          <span className={styles.message} role="status">
+            {message}
+          </span>
+        )}
       </div>
     </div>
   );

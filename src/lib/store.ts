@@ -8,7 +8,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { parseAddress, toAddress } from "./address";
 import { Cells, getFixture, isFixtureName } from "./fixtures";
-import { COLS, ROWS } from "./grid-size";
+import { COLS, MAX_CELL_CHARS, ROWS } from "./grid-size";
 import { MAX_NAME_CHARS, MAX_SHEETS, SheetMeta } from "./sheet-meta";
 
 const DIR = path.join(process.cwd(), "data");
@@ -135,8 +135,6 @@ export function applyChanges(id: string, changes: Changes): Promise<boolean> {
     return true;
   });
 }
-
-const MAX_CELL_CHARS = 2000;
 
 // Returns null unless every single entry is valid.
 export function parseChanges(body: unknown): Changes | null {
