@@ -84,8 +84,11 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
   // Temporary: how many cells the last edit recomputed (for testing).
   const [recalculated, setRecalculated] = useState(0);
 
-    // A short note about what Copy or Paste just did (or why it refused)
-    const [message, setMessage] = useState<{ text: string; kind: "info" | "error" } | null>(null);
+  // A short note about what Copy or Paste just did (or why it refused)
+  const [message, setMessage] = useState<{
+    text: string;
+    kind: "info" | "error";
+  } | null>(null);
 
   // ---- layout ----
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -364,7 +367,11 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     e.preventDefault();
     // Plain text only. Never "text/html": that is how a web page's markup
     // would get in, and nothing here would ever need it.
-    const plan = planPaste(e.clipboardData.getData("text/plain"), range, sheet.raw);
+    const plan = planPaste(
+      e.clipboardData.getData("text/plain"),
+      range,
+      sheet.raw
+    );
     if (!plan.ok) {
       setMessage({ kind: "error", text: plan.error }); // refused: nothing changed
       return;
@@ -376,7 +383,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     setExtent(
       area.r1 === area.r2 && area.c1 === area.c2
         ? null
-        : { row: area.r2, col: area.c2 },
+        : { row: area.r2, col: area.c2 }
     );
     scrollToCell({ row: area.r1, col: area.c1 });
     setMessage({ kind: "info", text: describePaste(plan) });
@@ -456,7 +463,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
     // input (cell editor, formula bar, go-to box) or on a button belong to it.
     if (draft !== null || e.target !== e.currentTarget) return;
 
-        // F6: jump to the formula bar (Tab moves between cells, so it can't be
+    // F6: jump to the formula bar (Tab moves between cells, so it can't be
     // used to leave the grid). Escape in the bar comes back here.
     if (e.key === "F6") {
       e.preventDefault();
@@ -491,19 +498,24 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
       }
     }
 
-        // Big jumps, for a 10,000-row sheet: Page Up/Down, Home/End, and
+    // Big jumps, for a 10,000-row sheet: Page Up/Down, Home/End, and
     // Cmd/Ctrl+arrows to the edge of the sheet (Cmd/Ctrl+Home is A1).
     const mod = e.metaKey || e.ctrlKey;
     const page = Math.max(1, Math.floor((viewportH - HEADER_H) / ROW_H) - 1);
     let jump: CellPos | null = null;
-    if (e.key === "PageDown") jump = { row: clamp(active.row + page, ROWS), col: active.col };
-    else if (e.key === "PageUp") jump = { row: clamp(active.row - page, ROWS), col: active.col };
+    if (e.key === "PageDown")
+      jump = { row: clamp(active.row + page, ROWS), col: active.col };
+    else if (e.key === "PageUp")
+      jump = { row: clamp(active.row - page, ROWS), col: active.col };
     else if (e.key === "Home") jump = { row: mod ? 0 : active.row, col: 0 };
-    else if (e.key === "End") jump = { row: mod ? ROWS - 1 : active.row, col: COLS - 1 };
+    else if (e.key === "End")
+      jump = { row: mod ? ROWS - 1 : active.row, col: COLS - 1 };
     else if (mod && e.key === "ArrowUp") jump = { row: 0, col: active.col };
-    else if (mod && e.key === "ArrowDown") jump = { row: ROWS - 1, col: active.col };
+    else if (mod && e.key === "ArrowDown")
+      jump = { row: ROWS - 1, col: active.col };
     else if (mod && e.key === "ArrowLeft") jump = { row: active.row, col: 0 };
-    else if (mod && e.key === "ArrowRight") jump = { row: active.row, col: COLS - 1 };
+    else if (mod && e.key === "ArrowRight")
+      jump = { row: active.row, col: COLS - 1 };
     if (jump) {
       e.preventDefault();
       setActive(jump);
@@ -835,9 +847,7 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
         <span>
           Average: {stats.average !== null ? formatValue(stats.average) : "—"}
         </span>
-        <span>
-          Count: {stats.count}
-          </span>
+        <span>Count: {stats.count}</span>
       </div>
 
       {isEmpty && (
@@ -849,7 +859,9 @@ export default function Grid({ doc, save }: { doc: SheetDoc; save: SaveInfo }) {
 
       {message && (
         <div
-          className={`${styles.toast} ${message.kind === "error" ? styles.toastError : ""}`}
+          className={`${styles.toast} ${
+            message.kind === "error" ? styles.toastError : ""
+          }`}
           role={message.kind === "error" ? "alert" : "status"}
         >
           <span>{message.text}</span>

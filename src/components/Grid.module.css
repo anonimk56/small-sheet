@@ -208,7 +208,8 @@
 .statusBar {
   flex: none;
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 4px 24px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   font-family: monospace;
@@ -447,5 +448,16 @@
   to {
     opacity: 1;
     transform: translate(-50%, 0);
+  }
+}
+/* ---- status bar on phones: let the items wrap instead of overflowing ---- */
+@media (max-width: 600px) {
+  .statusBar {
+    gap: 4px 16px;
+  }
+
+  /* Same specificity as the min-width rules above, and declared after them */
+  .statusBar > span:nth-child(n) {
+    min-width: 0;
   }
 }
